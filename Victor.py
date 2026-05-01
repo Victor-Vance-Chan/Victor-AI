@@ -25,19 +25,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. 頂部快速輸入區 ---
-st.title("🛡️ 詹VICTOR帥 | AI 深度交互動態戰情室")
-c_in1, c_in2, c_in3, c_in4 = st.columns([1, 1, 1, 1])
-with c_in1:
-    stock_id = st.text_input("📍 代號", value="2330")
-with c_in2:
-    cost_price = st.number_input("💰 成本價", value=0.0, format="%.2f")
-with c_in3:
-    hold_vol = st.number_input("股數 (股)", value=1000, step=1000)
-with c_in4:
-    display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=200)
-
-# --- 3. 數據核心 ---
+# --- 2. 數據核心 ---
 @st.cache_data(ttl=300)
 def load_stock_data_safe(sid):
     for suffix in [".TW", ".TWO"]:
@@ -57,6 +45,14 @@ def get_poc_data(df_slice, bins):
     v_hist, _ = np.histogram(df_slice['Close'], bins=p_buckets, weights=df_slice['Volume'])
     poc = (p_buckets[np.argmax(v_hist)] + p_buckets[np.argmax(v_hist)+1]) / 2
     return poc, p_buckets, v_hist
+
+# --- 3. 頂部快速輸入區 ---
+st.title("🛡️ 詹VICTOR帥 | AI 深度交互動態戰情室")
+c_in1, c_in2, c_in3, c_in4 = st.columns([1, 1, 1, 1])
+with c_in1: stock_id = st.text_input("📍 代號", value="2330")
+with c_in2: cost_price = st.number_input("💰 成本價", value=0.0, format="%.2f")
+with c_in3: hold_vol = st.number_input("股數 (股)", value=1000, step=1000)
+with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=200)
 
 raw_df, actual_ticker = load_stock_data_safe(stock_id)
 
@@ -88,39 +84,39 @@ if raw_df is not None:
 
     tab1, tab2, tab3 = st.tabs(["📊 技術看板", "💎 籌碼深度分佈", "🎯 深度實戰建議"])
 
-    # --- TAB 1: 技術看板 (OBV 填滿 + 鎖固比例) ---
+    # 全域鎖定 Config
+    lock_config = {
+        'displayModeBar': False, 
+        'scrollZoom': False, 
+        'staticPlot': False, 
+        'doubleClick': False, 
+    }
+
     with tab1:
         fig = make_subplots(rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.015, 
                            row_heights=[0.35, 0.12, 0.12, 0.12, 0.12, 0.15])
         
         fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], name="20MA", line=dict(color='orange', width=2)), row=1, col=1)
-        
         if cost_price > 0:
             fig.add_hline(y=cost_price, line_dash="dash", line_color="#333", annotation_text=f"成本:{cost_price}", row=1, col=1)
         
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], name="RSI", line=dict(color='#9467bd')), row=2, col=1)
         fig.add_trace(go.Bar(x=df.index, y=df['MACDh_12_26_9'], name="MACD"), row=3, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['MFI_14'], name="MFI", line=dict(color='#17becf')), row=4, col=1)
-        
-        # OBV 指標改回填滿模式
         fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="OBV", fill='tozeroy', line=dict(color='#e377c2', width=1.5)), row=5, col=1)
         
         colors = ['#FF0000' if x >= 0 else '#00FF00' for x in df['Net_Flow']]
         fig.add_trace(go.Bar(x=df.index, y=df['Net_Flow'], name="資金流", marker_color=colors), row=6, col=1)
         
-        fig.update_layout(
-            height=900, 
-            template="plotly_white", 
-            hovermode='x unified', 
-            showlegend=False, 
-            xaxis_rangeslider_visible=False,
-            margin=dict(l=10, r=10, t=30, b=10)
-        )
-        # config 鎖固：移除工具列，禁用滾輪縮放
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False, 'scrollZoom': False})
+        fig.update_layout(height=900, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=30, b=10))
+        
+        # 關鍵：鎖定座標軸，防止視窗內縮放
+        fig.update_xaxes(fixedrange=True)
+        fig.update_yaxes(fixedrange=True)
+        
+        st.plotly_chart(fig, use_container_width=True, config=lock_config)
 
-    # --- TAB 2: 籌碼深度分析 ---
     with tab2:
         col_c1, col_c2 = st.columns([0.55, 0.45])
         with col_c1:
@@ -128,20 +124,21 @@ if raw_df is not None:
             fig_vp.add_hline(y=price_now, line_color="red", line_width=2, annotation_text="現價")
             fig_vp.add_hline(y=poc_price, line_dash="dash", line_color="blue", annotation_text="POC重心")
             fig_vp.update_layout(height=600, hovermode='y unified', showlegend=False, margin=dict(l=5, r=5, t=10, b=10))
-            st.plotly_chart(fig_vp, use_container_width=True, config={'displayModeBar': False, 'scrollZoom': False})
+            fig_vp.update_xaxes(fixedrange=True)
+            fig_vp.update_yaxes(fixedrange=True)
+            st.plotly_chart(fig_vp, use_container_width=True, config=lock_config)
         with col_c2:
             st.markdown('<p class="diag-section-title">🕵️ 詹帥籌碼核心觀察</p>', unsafe_allow_html=True)
             st.markdown(f"<div class='indicator-box'><b>📍 籌碼重心 (POC) 解析</b><br>密集區在 {poc_price:.2f}。目前為{'「多頭優勢」' if price_now > poc_price else '「空頭反彈」'}。</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='indicator-box'><b>🔥 動能指標 (MFI)</b><br>數值 {curr['MFI_14']:.1f}。{'資金流入，籌碼穩定。' if curr['MFI_14'] > 50 else '資金流出，嚴防無量。'}</div>", unsafe_allow_html=True)
 
-    # --- TAB 3: 深度策略建議 (完整不縮水) ---
     with tab3:
         col_r1, col_r2 = st.columns([0.45, 0.55])
         with col_r1:
             radar_vals = [100 if price_now > curr['SMA_20'] else 20, curr['RSI_14'], curr['MFI_14'], 100 if curr['MACDh_12_26_9'] > 0 else 20, 100 if curr['OBV'] > df['OBV'].iloc[-5] else 30, 100 if curr['Net_Flow'] > 0 else 30]
             fig_r = go.Figure(go.Scatterpolar(r=radar_vals, theta=['趨勢', 'RSI', 'MFI', 'MACD', 'OBV', '資金'], fill='toself'))
-            fig_r.update_layout(height=400, showlegend=False)
-            st.plotly_chart(fig_r, use_container_width=True, config={'displayModeBar': False, 'staticPlot': False})
+            fig_r.update_layout(height=400, showlegend=False, polar=dict(radialaxis=dict(visible=True, range=[0, 100]), angularaxis=dict(direction="clockwise")))
+            st.plotly_chart(fig_r, use_container_width=True, config=lock_config)
         
         with col_r2:
             st.markdown('<p class="diag-section-title">🚀 詹帥動態實戰戰略艙</p>', unsafe_allow_html=True)
