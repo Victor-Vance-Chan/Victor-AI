@@ -47,7 +47,7 @@ def get_poc_data(df_slice, bins):
     return poc, p_buckets, v_hist
 
 # --- 3. 頂部快速輸入區 ---
-st.markdown('<h1 class="centered-title">🛡️ 詹VICTOR帥<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;     AI 戰情室</h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="centered-title">🛡️ 詹VICTOR帥<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;AI 戰情室</h1>', unsafe_allow_html=True)
 c_in1, c_in2, c_in3, c_in4 = st.columns([1, 1, 1, 1])
 with c_in1: stock_id = st.text_input("📍 代號", value="2330")
 with c_in2: cost_price = st.number_input("💰 成本價", value=0.0, format="%.2f")
