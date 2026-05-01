@@ -47,12 +47,12 @@ def get_poc_data(df_slice, bins):
     return poc, p_buckets, v_hist
 
 # --- 3. 頂部快速輸入區 ---
-st.title("🛡️ 詹VICTOR帥 | AI 深度交互動態戰情室")
+st.title("🛡️ 詹VICTOR帥 | AI 戰情室")
 c_in1, c_in2, c_in3, c_in4 = st.columns([1, 1, 1, 1])
 with c_in1: stock_id = st.text_input("📍 代號", value="2330")
 with c_in2: cost_price = st.number_input("💰 成本價", value=0.0, format="%.2f")
 with c_in3: hold_vol = st.number_input("股數 (股)", value=1000, step=1000)
-with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=60)
+with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=120)
 
 raw_df, actual_ticker = load_stock_data_safe(stock_id)
 
@@ -84,7 +84,6 @@ if raw_df is not None:
 
     tab1, tab2, tab3 = st.tabs(["📊 技術看板", "💎 籌碼深度分佈", "🎯 深度實戰建議"])
 
-    # 全域鎖定 Config
     lock_config = {
         'displayModeBar': False, 
         'scrollZoom': False, 
@@ -101,19 +100,29 @@ if raw_df is not None:
         if cost_price > 0:
             fig.add_hline(y=cost_price, line_dash="dash", line_color="#333", annotation_text=f"成本:{cost_price}", row=1, col=1)
         
+        # 指標 1: RSI
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], name="RSI", line=dict(color='#9467bd')), row=2, col=1)
+        # 指標 2: MACD
         fig.add_trace(go.Bar(x=df.index, y=df['MACDh_12_26_9'], name="MACD"), row=3, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['MFI_14'], name="MFI", line=dict(color='#17becf')), row=4, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="OBV", fill='tozeroy', line=dict(color='#e377c2', width=1.5)), row=5, col=1)
-        
+        # 指標 3: MFI (修改為填滿)
+        fig.add_trace(go.Scatter(x=df.index, y=df['MFI_14'], name="MFI", fill='tozeroy', line=dict(color='#17becf')), row=4, col=1)
+        # 指標 4: OBV (修改為不填滿)
+        fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="OBV", line=dict(color='#e377c2', width=1.5)), row=5, col=1)
+        # 指標 5: 資金流
         colors = ['#FF0000' if x >= 0 else '#00FF00' for x in df['Net_Flow']]
         fig.add_trace(go.Bar(x=df.index, y=df['Net_Flow'], name="資金流", marker_color=colors), row=6, col=1)
         
-        fig.update_layout(height=900, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=30, b=10))
+        fig.update_layout(height=950, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=30, b=10))
         
-        # 關鍵：鎖定座標軸，防止視窗內縮放
+        # 鎖定座標軸並加入各指標名稱標籤
         fig.update_xaxes(fixedrange=True)
         fig.update_yaxes(fixedrange=True)
+        fig.update_yaxes(title_text="價格", row=1, col=1)
+        fig.update_yaxes(title_text="RSI", row=2, col=1)
+        fig.update_yaxes(title_text="MACD", row=3, col=1)
+        fig.update_yaxes(title_text="MFI", row=4, col=1)
+        fig.update_yaxes(title_text="OBV", row=5, col=1)
+        fig.update_yaxes(title_text="資金流", row=6, col=1)
         
         st.plotly_chart(fig, use_container_width=True, config=lock_config)
 
