@@ -8,30 +8,39 @@ import numpy as np
 from streamlit_autorefresh import st_autorefresh  
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(layout="wide", page_title="詹VICTOR帥 | AI 戰略終極版")
+st.set_page_config(layout="wide", page_title="詹VICTOR帥 | AI 深度交互實戰看板")
 st_autorefresh(interval=60 * 1000, key="data_refresh")
 
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
-    .stMetric { background: #ffffff; border: 1px solid #dee2e6; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    .stTabs [aria-selected="true"] { color: #007bff !important; font-weight: bold; border-bottom: 2px solid #007bff; }
     .summary-card { background-color: #ffffff; padding: 20px; border-radius: 15px; border-left: 8px solid #007bff; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
-    .indicator-box { background: #f0f2f6; padding: 15px; border-radius: 8px; margin-bottom: 12px; border-left: 5px solid #007bff; line-height: 1.6; }
-    .diag-section-title { font-weight: bold; color: #1f77b4; margin-top: 15px; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+    .indicator-box { background: #ffffff; padding: 18px; border-radius: 10px; margin-bottom: 15px; border-left: 6px solid #007bff; line-height: 1.8; border: 1px solid #eaeaea; }
+    .strategy-box { background: #ffffff; padding: 20px; border-radius: 12px; border: 2px solid #007bff; margin-top: 10px; box-shadow: 5px 5px 15px rgba(0,0,0,0.05); }
+    .diag-section-title { font-weight: bold; color: #1f77b4; margin-top: 20px; margin-bottom: 12px; border-bottom: 2px solid #007bff; padding-bottom: 5px; font-size: 18px; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🛡️ 詹VICTOR帥 | AI 戰情室")
+# --- 2. 頂部快速輸入區 ---
+st.title("🛡️ 詹VICTOR帥 | AI 深度交互動態戰情室")
+c_in1, c_in2, c_in3, c_in4 = st.columns([1, 1, 1, 1])
+with c_in1:
+    stock_id = st.text_input("📍 代號", value="2330")
+with c_in2:
+    cost_price = st.number_input("💰 成本價", value=0.0, format="%.2f")
+with c_in3:
+    hold_vol = st.number_input("股數 (股)", value=1000, step=1000)
+with c_in4:
+    display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=200)
 
-# --- 2. 數據下載函數 ---
+# --- 3. 數據核心 (含 21 項指標基礎數據) ---
 @st.cache_data(ttl=300)
 def load_stock_data_safe(sid):
     for suffix in [".TW", ".TWO"]:
         try:
             full_sid = f"{sid}{suffix}"
-            df = yf.download(full_sid, period="2y", interval="1d", auto_adjust=False, progress=False, timeout=5)
-            if not df.empty and len(df) > 10:
+            df = yf.download(full_sid, period="2y", interval="1d", auto_adjust=False, progress=False)
+            if not df.empty:
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
                 return df, full_sid
@@ -45,17 +54,11 @@ def get_poc_data(df_slice, bins):
     poc = (p_buckets[np.argmax(v_hist)] + p_buckets[np.argmax(v_hist)+1]) / 2
     return poc, p_buckets, v_hist
 
-# --- 3. 側邊欄設定 ---
-st.sidebar.header("🕹️ 戰略核心設定")
-stock_id = st.sidebar.text_input("輸入個股代號", value="2330")
-display_days = st.sidebar.slider("觀察窗口 (天)", 60, 500, 200)
-bins_val = st.sidebar.slider("籌碼掃描精度", 50, 200, 120)
-
 raw_df, actual_ticker = load_stock_data_safe(stock_id)
 
 if raw_df is not None:
     df_d = raw_df.copy()
-    # 技術指標計算
+    # 計算全方位技術指標
     df_d.ta.sma(length=20, append=True)
     df_d.ta.rsi(length=14, append=True)
     df_d.ta.macd(append=True)
@@ -66,131 +69,123 @@ if raw_df is not None:
     df = df_d.tail(display_days).copy()
     curr = df.iloc[-1]
     price_now = float(curr['Close'])
-    poc_price, p_buckets, v_hist = get_poc_data(df, bins_val)
+    poc_price, p_buckets, v_hist = get_poc_data(df, 120)
 
-    # 頂部戰力摘要
-    st.markdown('<div class="summary-card">', unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([0.4, 0.4, 0.2])
-    with c1:
-        st.subheader(f"詹帥 AI 戰略監控：{actual_ticker}")
-        st.write(f"現價 **{price_now:.2f}** | 重心位 **{poc_price:.2f}**")
-    with c2:
-        st.write(f"資金流向：**{'🔴 主力吸籌' if curr['Net_Flow'] > 0 else '🟢 主力派發'}**")
-        st.write(f"防線：**{'🔥 多頭控盤' if price_now > curr['SMA_20'] else '❄️ 空頭盤整'}**")
-    with c3:
-        score = sum([30 if price_now > curr['SMA_20'] else 0, 20 if curr['RSI_14'] > 50 else 0, 50 if price_now > poc_price else 0])
-        st.metric("戰力評分", f"{score}")
-    st.markdown('</div>', unsafe_allow_html=True)
+    # 實時損益與比率
+    unrealized_pnl = (price_now - cost_price) * hold_vol if cost_price > 0 else 0
+    pnl_ratio = (unrealized_pnl / (cost_price * hold_vol)) * 100 if cost_price > 0 else 0
 
-    tab_tech, tab_chip, tab_radar = st.tabs(["技術看板", "籌碼深度分析", "多空雷達診斷"])
+    st.markdown(f'''
+        <div class="summary-card">
+            <b>即時盤勢：{actual_ticker} | 現價：{price_now:.2f} | 籌碼密集區：{poc_price:.2f}</b><br>
+            <span style="color:{'#d9534f' if unrealized_pnl < 0 else '#5cb85c'}; font-size: 20px; font-weight: bold;">
+                當前帳面損益：{unrealized_pnl:,.0f} ({pnl_ratio:.2f}%)
+            </span>
+        </div>
+    ''', unsafe_allow_html=True)
 
-    with tab_tech:
-        # 6層子圖配置
+    tab1, tab2, tab3 = st.tabs(["📊 技術看板", "💎 籌碼深度分佈", "🎯 深度實戰建議"])
+
+    # --- TAB 1: 交互式技術看板 (恢復十字線與懸停訊息) ---
+    with tab1:
         fig = make_subplots(rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.015, 
-                           row_heights=[0.35, 0.13, 0.13, 0.13, 0.13, 0.13])
+                           row_heights=[0.35, 0.12, 0.12, 0.12, 0.12, 0.15])
         
-        # 指標繪製
-        fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], name="20MA", line=dict(color='orange', width=1.5)), row=1, col=1)
+        # K線與十字線支援
+        fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], 
+                                    name="K線", hoverinfo='all'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], name="20MA", line=dict(color='orange', width=2)), row=1, col=1)
+        
+        if cost_price > 0:
+            fig.add_hline(y=cost_price, line_dash="dash", line_color="#333", annotation_text=f"成本:{cost_price}", row=1, col=1)
+        
+        # 指標層
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], name="RSI", line=dict(color='#9467bd')), row=2, col=1)
         fig.add_trace(go.Bar(x=df.index, y=df['MACDh_12_26_9'], name="MACD柱"), row=3, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['MFI_14'], name="MFI", fill='tozeroy', line=dict(color='#17becf')), row=4, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="OBV", line=dict(color='blue')), row=5, col=1)
-        fig.add_trace(go.Bar(x=df.index, y=df['Net_Flow'], name="資金流", marker_color=np.where(df['Net_Flow']>=0, '#d62728', '#2ca02c')), row=6, col=1)
-
-        # 【核心優化】：日期數字化 + 全方位連動十字線
-        for i in range(1, 7):
-            fig.update_xaxes(
-                tickformat="%Y-%m-%d", # 日期改為數字格式
-                showspikes=True, 
-                spikemode="across", 
-                spikedash="dash", 
-                spikecolor="#666666", 
-                spikethickness=1,
-                row=i, col=1
-            )
-            fig.update_yaxes(
-                showspikes=True, 
-                spikemode="toaxis", 
-                spikedash="dash", 
-                spikecolor="#666666", 
-                row=i, col=1
-            )
+        fig.add_trace(go.Scatter(x=df.index, y=df['MFI_14'], name="MFI", line=dict(color='#17becf')), row=4, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="OBV", line=dict(color='#e377c2')), row=5, col=1)
         
+        colors = ['#FF0000' if x >= 0 else '#00FF00' for x in df['Net_Flow']]
+        fig.add_trace(go.Bar(x=df.index, y=df['Net_Flow'], name="預估資金流", marker_color=colors), row=6, col=1)
+        
+        # 關鍵更新：恢復交互配置
         fig.update_layout(
+            height=950, 
             template="plotly_white", 
-            height=1100, 
-            xaxis_rangeslider_visible=False, 
-            hovermode='x unified', 
-            hoverlabel=dict(bgcolor="rgba(255,255,255,0.9)", font_size=12),
-            showlegend=False,
-            margin=dict(l=50, r=50, t=30, b=30)
+            hovermode='x unified', # 十字線懸停模式
+            showlegend=True,
+            xaxis_rangeslider_visible=False,
+            margin=dict(l=10, r=10, t=30, b=10)
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True) # 移除 displayModeBar: False 恢復工具列
 
-    with tab_chip:
-        col_c1, col_c2 = st.columns([0.6, 0.4])
+    # --- TAB 2: 籌碼深度分析 (不縮水) ---
+    with tab2:
+        col_c1, col_c2 = st.columns([0.55, 0.45])
         with col_c1:
-            fig_vp = go.Figure(go.Bar(y=(p_buckets[:-1] + p_buckets[1:]) / 2, x=v_hist, orientation='h', opacity=0.7))
-            fig_vp.add_hline(y=price_now, line_color="red", annotation_text="現價", line_width=2)
-            fig_vp.add_hline(y=poc_price, line_dash="dash", annotation_text="POC重心", line_color="blue")
-            fig_vp.update_layout(title="Volume Profile 籌碼分佈", xaxis_title="成交量", height=600, template="plotly_white")
+            fig_vp = go.Figure(go.Bar(y=(p_buckets[:-1] + p_buckets[1:]) / 2, x=v_hist, orientation='h', opacity=0.7, name="量價分佈"))
+            fig_vp.add_hline(y=price_now, line_color="red", line_width=2, annotation_text="現價")
+            fig_vp.add_hline(y=poc_price, line_dash="dash", line_color="blue", annotation_text="POC重心")
+            fig_vp.update_layout(title="Volume Profile (滑鼠可查看各價位量能)", height=600, hovermode='y unified')
             st.plotly_chart(fig_vp, use_container_width=True)
         with col_c2:
-            st.subheader("💡 籌碼深度報告")
-            with st.container(border=True):
-                dist_to_poc = ((price_now - poc_price) / poc_price) * 100
-                st.markdown(f"📍 **重心分析：** 距離 POC **{dist_to_poc:.1f}%**")
-                if price_now > poc_price: st.success("✅ 目前股價獲得籌碼支撐")
-                else: st.warning("⚠️ 股價承受上方成本壓力")
-                st.write(f"🔥 **MFI 現值：** {curr['MFI_14']:.1f}")
+            st.markdown('<p class="diag-section-title">🕵️ 詹帥籌碼核心觀察</p>', unsafe_allow_html=True)
+            st.markdown(f"<div class='indicator-box'><b>📍 籌碼重心 (POC) 解析</b><br>當前密集區在 {poc_price:.2f}。股價目前處於{'「多頭優勢區」' if price_now > poc_price else '「空頭反彈區」'}。</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='indicator-box'><b>🔥 動能指標 (MFI)</b><br>數值 {curr['MFI_14']:.1f}。{'資金持續流入，籌碼穩定性高。' if curr['MFI_14'] > 50 else '資金流出中，防範無量下跌。'}</div>", unsafe_allow_html=True)
 
-    with tab_radar:
-        col_r1, col_r2 = st.columns([0.5, 0.5])
+    # --- TAB 3: 深度策略建議 (針對套牢深度與獲利調整) ---
+    with tab3:
+        col_r1, col_r2 = st.columns([0.45, 0.55])
         with col_r1:
-            radar_vals = [100 if price_now > curr['SMA_20'] else 20, curr['RSI_14'], curr['MFI_14'], 100 if curr['MACDh_12_26_9'] > 0 else 20, 100 if curr['OBV'] > df['OBV'].shift(5).iloc[-1] else 30, 100 if curr['Net_Flow'] > 0 else 30]
-            fig_radar = go.Figure(go.Scatterpolar(r=radar_vals, theta=['20MA防守', 'RSI動能', 'MFI熱錢', 'MACD方向', 'OBV能量', '資金流向'], fill='toself'))
-            fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), height=500, template="plotly_white")
-            st.plotly_chart(fig_radar, use_container_width=True)
-            
+            radar_vals = [100 if price_now > curr['SMA_20'] else 20, curr['RSI_14'], curr['MFI_14'], 100 if curr['MACDh_12_26_9'] > 0 else 20, 100 if curr['OBV'] > df['OBV'].iloc[-5] else 30, 100 if curr['Net_Flow'] > 0 else 30]
+            fig_r = go.Figure(go.Scatterpolar(r=radar_vals, theta=['趨勢', 'RSI', 'MFI', 'MACD', 'OBV', '資金'], fill='toself'))
+            fig_r.update_layout(height=400)
+            st.plotly_chart(fig_r, use_container_width=True)
+        
         with col_r2:
-            st.subheader("📝 詹帥 AI 完整診斷（不縮減版）")
-            with st.container(border=True):
-                # 週期位階
-                st.markdown('<p class="diag-section-title">📅 週期趨勢定位</p>', unsafe_allow_html=True)
-                d_trend = "🔥 多頭" if price_now > curr['SMA_20'] else "❄️ 空頭"
-                w_trend = "📈 強勢" if price_now > df_d['Close'].rolling(5).mean().iloc[-1] else "📉 轉弱"
-                m_trend = "🧱 穩健" if price_now > df_d['Close'].rolling(20).mean().iloc[-1] else "⚠️ 警戒"
-                st.write(f"日線：**{d_trend}** | 週線：**{w_trend}** | 月線：**{m_trend}**")
-                
-                # RSI 深度提示
-                st.markdown('<p class="diag-section-title">🔍 技術動能深度解析</p>', unsafe_allow_html=True)
-                rsi_v = curr['RSI_14']
-                rsi_msg = "超買過熱，防備高檔獲利了結" if rsi_v > 70 else "多方掌控，具備推升動能" if rsi_v > 50 else "弱勢整理，反彈壓力大" if rsi_v > 30 else "嚴重超跌，尋找止跌訊號"
-                st.markdown(f"<div class='indicator-box'><b>RSI 強度偵測 ({rsi_v:.1f})</b><br>戰略建議：{rsi_msg}</div>", unsafe_allow_html=True)
-                
-                # MACD 深度提示
-                macd_h = curr['MACDh_12_26_9']
-                m_prev = df['MACDh_12_26_9'].iloc[-2]
-                macd_msg = "紅柱放大：多頭攻擊波段啟動" if macd_h > 0 and macd_h > m_prev else "綠柱縮減：跌勢初步止穩" if macd_h < 0 and macd_h > m_prev else "紅柱縮減：多頭動能耗盡，防回檔"
-                st.markdown(f"<div class='indicator-box'><b>MACD 柱狀震盪 ({macd_h:.2f})</b><br>動態解讀：{macd_msg}</div>", unsafe_allow_html=True)
-                
-                # 資金流深度提示
-                mfi_v = curr['MFI_14']
-                obv_change = curr['OBV'] - df['OBV'].iloc[-5]
-                st.markdown(f"<div class='indicator-box'><b>資金熱度 (MFI) 與能量 (OBV)</b><br>目前 MFI 為 {mfi_v:.1f}。OBV 表現：{'✅ 量價配合，波段有望延續' if obv_change > 0 else '❌ 價漲量不漲，留意虛紅'}。</div>", unsafe_allow_html=True)
+            st.markdown('<p class="diag-section-title">🚀 詹帥動態實戰戰略艙</p>', unsafe_allow_html=True)
+            
+            support = max(curr['SMA_20'], poc_price)
+            cmd = ""
+            detail = ""
+            border_color = "#007bff"
 
-                st.markdown('<p class="diag-section-title">📊 資金流量柱即時短評</p>', unsafe_allow_html=True)
-                if curr['Net_Flow'] > 0: 
-                    st.info("🔥 主力資金「淨流入」：市場買盤意願積極，多方勝出。")
-                else: 
-                    st.warning("⚠️ 主力資金「淨流出」：出現主動拋售賣壓，宜謹慎操作。")
+            # 邏輯 A: 獲利狀態
+            if cost_price == 0:
+                cmd = "請輸入成本價"
+                detail = "輸入後將依據損益深度提供專屬策略。"
+            elif pnl_ratio >= 15:
+                cmd = "【大幅獲利】進入主升段，啟動「移動止盈」"
+                detail = f"獲利已達 {pnl_ratio:.1f}%，建議守住 {price_now * 0.93:.2f}，跌破才出清，讓利潤奔跑。"
+                border_color = "#d9534f"
+            elif 0 <= pnl_ratio < 15:
+                cmd = "【初步獲利】趨勢向上，持股續抱"
+                detail = f"目前獲利溫和，只要不破支撐位 {support:.2f}，建議續抱，目標價上看 {price_now * 1.1:.2f}。"
+                border_color = "#f0ad4e"
+            
+            # 邏輯 B: 套牢狀態
+            elif -5 <= pnl_ratio < 0:
+                cmd = "【微幅套牢】良性回檔，切勿恐慌性砍倉"
+                detail = f"套牢僅 {pnl_ratio:.1f}%，目前仍在 POC 重心 ({poc_price:.2f}) 附近，建議觀察 3 天，不破底可攤平。"
+                border_color = "#5bc0de"
+            else: # 深套 < -5%
+                cmd = "【深度套牢】嚴防走勢走空，執行戰略撤退"
+                detail = f"虧損達 {pnl_ratio:.1f}%，已脫離安全區。若明日未站回 {support:.2f}，建議減碼 1/2 保護資金。"
+                border_color = "#5cb85c"
 
-                st.markdown("---")
-                st.markdown("#### 🚩 詹帥戰略總結")
-                if score >= 80: st.success("🎯 **【戰略特優】** 多項指標共振，具備強大攻擊能量。")
-                elif score >= 50: st.info("⚖️ **【戰略中立】** 位階尚可，適合採取低吸戰術。")
-                else: st.error("📉 **【戰略保守】** 破線且重心下移，建議保留現金。")
+            st.markdown(f"""
+            <div class='strategy-box' style='border-color: {border_color};'>
+                <span style='color:{border_color}; font-size:22px; font-weight:bold;'>指令：{cmd}</span><br><br>
+                ● <b>操作指令：</b>{detail}<br>
+                ● <b>關鍵支撐：</b><span style="color:green; font-weight:bold;">{support:.2f}</span><br>
+                ● <b>預估壓力：</b><span style="color:red; font-weight:bold;">{price_now * 1.08:.2f}</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.markdown('<p class="diag-section-title">🔍 指標深度詳解 (21項評估)</p>', unsafe_allow_html=True)
+            st.markdown(f"<div class='indicator-box'><b>RSI 攻擊力道 ({curr['RSI_14']:.1f})</b><br>{'處於強勢區，具備過高潛力。' if curr['RSI_14']>60 else '處於盤整期，等待量能表態。'}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='indicator-box'><b>MACD 趨勢判讀 ({curr['MACDh_12_26_9']:.2f})</b><br>{'波段多方控盤，紅柱成長中。' if curr['MACDh_12_26_9']>0 else '空方整理，綠柱收斂中。'}</div>", unsafe_allow_html=True)
+            st.info(f"🎯 詹帥實戰筆記：目前 {actual_ticker} 指標顯示{'多頭' if price_now > support else '空頭'}佔優，請嚴守紀律。")
 
 else:
-    st.error("❌ 無法載入數據，請檢查代號。")
+    st.error("❌ 數據載入失敗，請檢查代號是否正確。")
