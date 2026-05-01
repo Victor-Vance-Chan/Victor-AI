@@ -47,12 +47,12 @@ def get_poc_data(df_slice, bins):
     return poc, p_buckets, v_hist
 
 # --- 3. 頂部快速輸入區 ---
-st.title("🛡️ 詹VICTOR帥 | AI 戰情室")
+st.title("🛡️ 詹VICTOR帥    |    AI 戰情室")
 c_in1, c_in2, c_in3, c_in4 = st.columns([1, 1, 1, 1])
 with c_in1: stock_id = st.text_input("📍 代號", value="2330")
 with c_in2: cost_price = st.number_input("💰 成本價", value=0.0, format="%.2f")
 with c_in3: hold_vol = st.number_input("股數 (股)", value=1000, step=1000)
-with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=120)
+with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=60)
 
 raw_df, actual_ticker = load_stock_data_safe(stock_id)
 
