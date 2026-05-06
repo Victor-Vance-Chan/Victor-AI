@@ -22,6 +22,9 @@ st.markdown("""
     /* 強化分頁標籤鎖固感 */
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
     .stTabs [data-baseweb="tab"] { height: 45px; font-weight: 600; }
+    
+    /* 加減碼分頁專用樣式 */
+    .risk-metric { text-align: center; padding: 15px; border-radius: 10px; background: #fff; border: 1px solid #ddd; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -47,12 +50,12 @@ def get_poc_data(df_slice, bins):
     return poc, p_buckets, v_hist
 
 # --- 3. 頂部快速輸入區 ---
-st.markdown('<h1 class="centered-title">🛡️ 詹VICTOR帥<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;AI 戰情室</h1>', unsafe_allow_html=True)
+st.title("🛡️ 詹VICTOR帥 | AI 戰情室")
 c_in1, c_in2, c_in3, c_in4 = st.columns([1, 1, 1, 1])
 with c_in1: stock_id = st.text_input("📍 代號", value="2330")
 with c_in2: cost_price = st.number_input("💰 成本價", value=0.0, format="%.2f")
 with c_in3: hold_vol = st.number_input("股數 (股)", value=1000, step=1000)
-with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=60)
+with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=120)
 
 raw_df, actual_ticker = load_stock_data_safe(stock_id)
 
@@ -82,7 +85,7 @@ if raw_df is not None:
         </div>
     ''', unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs(["📊 技術看板", "💎 籌碼深度分佈", "🎯 深度實戰建議"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 技術看板", "💎 籌碼深度分佈", "🎯 深度實戰建議", "⚖️ 資金戰略與加減碼"])
 
     lock_config = {
         'displayModeBar': False, 
@@ -104,9 +107,9 @@ if raw_df is not None:
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], name="RSI", line=dict(color='#9467bd')), row=2, col=1)
         # 指標 2: MACD
         fig.add_trace(go.Bar(x=df.index, y=df['MACDh_12_26_9'], name="MACD"), row=3, col=1)
-        # 指標 3: MFI (修改為填滿)
+        # 指標 3: MFI
         fig.add_trace(go.Scatter(x=df.index, y=df['MFI_14'], name="MFI", fill='tozeroy', line=dict(color='#17becf')), row=4, col=1)
-        # 指標 4: OBV (修改為不填滿)
+        # 指標 4: OBV
         fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="OBV", line=dict(color='#e377c2', width=1.5)), row=5, col=1)
         # 指標 5: 資金流
         colors = ['#FF0000' if x >= 0 else '#00FF00' for x in df['Net_Flow']]
@@ -114,7 +117,6 @@ if raw_df is not None:
         
         fig.update_layout(height=950, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=30, b=10))
         
-        # 鎖定座標軸並加入各指標名稱標籤
         fig.update_xaxes(fixedrange=True)
         fig.update_yaxes(fixedrange=True)
         fig.update_yaxes(title_text="價格", row=1, col=1)
@@ -176,5 +178,80 @@ if raw_df is not None:
             st.markdown(f"<div class='indicator-box'><b>RSI 攻擊力 ({curr['RSI_14']:.1f})</b><br>{'強勢格局，具過高潛力。' if curr['RSI_14']>60 else '盤整待變，等待放量。'}</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='indicator-box'><b>MACD 趨勢 ({curr['MACDh_12_26_9']:.2f})</b><br>{'波段多方控盤中。' if curr['MACDh_12_26_9']>0 else '空方整理，動能收斂中。'}</div>", unsafe_allow_html=True)
             st.info(f"🎯 詹帥實戰筆記：目前 {actual_ticker} 顯示{'多頭' if price_now > support else '空頭'}佔優，請嚴守操作紀律。")
+
+    with tab4:
+        st.markdown('<p class="diag-section-title">⚖️ 詹帥倉位調控模擬器</p>', unsafe_allow_html=True)
+        
+        col_calc1, col_calc2 = st.columns([0.4, 0.6])
+        
+        with col_calc1:
+            st.subheader("🛠️ 加碼參數輸入")
+            with st.container():
+                st.write("---")
+                st.markdown("**現有部位**")
+                # 預設連動上方輸入區的資料
+                cur_avg_price = st.number_input("原有平均成本", value=cost_price if cost_price > 0 else 30.0, format="%.2f")
+                cur_shares = st.number_input("原有持股張數", value=int(hold_vol/1000), step=1)
+                
+                st.markdown("**計畫加碼**")
+                add_price = st.number_input("預計加碼價格", value=price_now, format="%.2f")
+                add_shares = st.number_input("預計加碼張數", value=1, step=1)
+                
+                # 計算邏輯
+                total_shares = cur_shares + add_shares
+                new_avg_price = ((cur_avg_price * cur_shares) + (add_price * add_shares)) / total_shares
+                price_diff_ratio = ((new_avg_price / cur_avg_price) - 1) * 100
+                
+        with col_calc2:
+            st.subheader("📊 戰略模擬結果")
+            
+            # 顯示平均成本變化
+            c1, c2, c3 = st.columns(3)
+            c1.metric("新平均成本", f"{new_avg_price:.2f}")
+            c2.metric("成本變動率", f"{price_diff_ratio:+.2f}%")
+            c3.metric("總持股張數", f"{total_shares} 張")
+            
+            # 風險指數與支撐關聯解析
+            st.markdown('<p class="diag-section-title">⚠️ 加碼風險評鑑</p>', unsafe_allow_html=True)
+            
+            risk_score = 0
+            risk_details = []
+            
+            # 判斷加碼點與支撐的關係
+            support_val = max(curr['SMA_20'], poc_price)
+            if add_price < support_val * 0.95:
+                risk_score += 60
+                risk_status = "🔴 高風險 (危險攤平)"
+                risk_color = "red"
+                risk_details.append("● 價格遠低於 SMA20 與 POC 支撐，目前屬於接飛刀行為。")
+            elif add_price <= support_val * 1.03:
+                risk_score += 20
+                risk_status = "🟢 低風險 (策略加碼)"
+                risk_color = "green"
+                risk_details.append("● 價格處於支撐位附近，屬於技術面合理的加碼區。")
+            else:
+                risk_score += 40
+                risk_status = "🟡 中風險 (追價加碼)"
+                risk_color = "orange"
+                risk_details.append("● 價格已脫離底部分佈，此時加碼會墊高不少成本，請注意追高風險。")
+
+            # 顯示評鑑結果
+            st.markdown(f"""
+                <div style='background: {risk_color}; color: white; padding: 15px; border-radius: 10px; font-weight: bold; font-size: 20px; text-align: center;'>
+                    當前加碼評級：{risk_status}
+                </div>
+            """, unsafe_allow_html=True)
+            
+            for detail in risk_details:
+                st.write(detail)
+            
+            st.markdown("---")
+            st.markdown("**💡 詹帥戰略提示：**")
+            st.info(f"""
+            1. **解套目標**：若要讓新平均成本回到損益平衡，股價需上漲至 **{new_avg_price:.2f}**。
+            2. **壓力測試**：若股價回檔至前低約 **{df['Low'].min():.2f}**，總部位帳面損失將擴大至 **{abs(df['Low'].min() - new_avg_price) * total_shares * 1000:,.0f}** 元。
+            3. **最佳加碼區點位**：目前籌碼最密集區(POC)在 **{poc_price:.2f}**，若能在該價格附近加碼，戰略勝率最高。
+            """)
+
 else:
     st.error("❌ 數據載入失敗，請檢查代號是否正確。")
