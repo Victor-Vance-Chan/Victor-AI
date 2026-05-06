@@ -158,7 +158,7 @@ if raw_df is not None:
         col_calc1, col_calc2 = st.columns([0.4, 0.6])
         with col_calc1:
             st.subheader("🛠️ 戰略參數輸入")
-            cur_avg_p = st.number_input("現有成本價", value=cost_price if cost_price > 0 else 30.0, format="%.2f", key="sim_cost")
+            cur_avg_p = st.number_input("現有成本價", value=cost_price if cost_price > 0 else 0.0, format="%.2f", key="sim_cost")
             cur_qty = st.number_input("現有張數", value=int(hold_vol/1000), step=1, key="sim_qty")
             st.write("---")
             change_shares = st.number_input("變動張數 (張)", value=1, step=1, key="sim_change_q")
