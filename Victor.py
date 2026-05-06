@@ -11,7 +11,7 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(layout="wide", page_title="詹VICTOR帥 | AI 深度交互實戰看板")
 st_autorefresh(interval=60 * 1000, key="data_refresh")
 
-# CSS 注入：強化手機端穩定性與 UI 質感
+# CSS 注入：強化手機端穩定性與 UI 質感 (完整保留)
 st.markdown("""
     <style>
     /* 防止手機瀏覽器非必要的橫向滾動 */
@@ -63,17 +63,13 @@ def get_poc_data(df_slice, bins):
     poc = (p_buckets[np.argmax(v_hist)] + p_buckets[np.argmax(v_hist)+1]) / 2
     return poc, p_buckets, v_hist
 
-# --- 3. 頂部快速輸入區 ---
+# --- 3. 頂部快速輸入區 (已取消恢復鍵) ---
 st.title("🛡️ 詹VICTOR帥 | AI 戰情室")
-c_in1, c_in2, c_in3, c_in4, c_in5 = st.columns([1, 1, 1, 1, 1])
+c_in1, c_in2, c_in3, c_in4 = st.columns([1, 1, 1, 1.5])
 with c_in1: stock_id = st.text_input("📍 代號", value="2330")
 with c_in2: cost_price = st.number_input("💰 成本價", value=0.0, format="%.2f")
 with c_in3: hold_vol = st.number_input("股數 (股)", value=1000, step=1000)
 with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=120)
-with c_in5: 
-    st.write(" ") # 調整垂直對齊
-    if st.button("🔄 恢復預設視角"):
-        st.rerun() # 一鍵還原所有圖表狀態
 
 raw_df, actual_ticker = load_stock_data_safe(stock_id)
 
