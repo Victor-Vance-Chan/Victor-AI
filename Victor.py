@@ -29,6 +29,16 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] { height: 45px; font-weight: 600; }
     
     .calc-highlight { background: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 5px; }
+    
+    /* 讓按鈕更醒目 */
+    div.stButton > button:first-child {
+        background-color: #007bff;
+        color: white;
+        border-radius: 10px;
+        border: none;
+        width: 100%;
+        font-weight: bold;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -55,11 +65,15 @@ def get_poc_data(df_slice, bins):
 
 # --- 3. 頂部快速輸入區 ---
 st.title("🛡️ 詹VICTOR帥 | AI 戰情室")
-c_in1, c_in2, c_in3, c_in4 = st.columns([1, 1, 1, 1])
+c_in1, c_in2, c_in3, c_in4, c_in5 = st.columns([1, 1, 1, 1, 1])
 with c_in1: stock_id = st.text_input("📍 代號", value="2330")
 with c_in2: cost_price = st.number_input("💰 成本價", value=0.0, format="%.2f")
 with c_in3: hold_vol = st.number_input("股數 (股)", value=1000, step=1000)
 with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=120)
+with c_in5: 
+    st.write(" ") # 調整垂直對齊
+    if st.button("🔄 恢復預設視角"):
+        st.rerun() # 一鍵還原所有圖表狀態
 
 raw_df, actual_ticker = load_stock_data_safe(stock_id)
 
@@ -91,18 +105,16 @@ if raw_df is not None:
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 技術看板", "💎 籌碼深度分佈", "🎯 深度實戰建議", "⚖️ 資金戰略與加減碼"])
 
-    # 核心配置：完全禁止縮放與編輯，適合手機與穩定看板使用
+    # 配置：防止誤觸縮放，僅保留 Y 軸標籤
     lock_config = {
         'displayModeBar': False, 
         'scrollZoom': False, 
         'staticPlot': False, 
         'doubleClick': False,
-        'showAxisDragHandles': False,
-        'showAxisRangeEntryBoxes': False
+        'responsive': True
     }
 
     with tab1:
-        # 移除 subplot_titles，改由 yaxis_title 呈現
         fig = make_subplots(rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
                            row_heights=[0.35, 0.12, 0.12, 0.12, 0.12, 0.15])
         
@@ -130,7 +142,6 @@ if raw_df is not None:
         
         fig.update_layout(height=1000, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=10, b=10))
         
-        # 僅在左側 Y 軸顯示指標名稱
         fig.update_yaxes(title_text="價格", row=1, col=1)
         fig.update_yaxes(title_text="RSI", row=2, col=1)
         fig.update_yaxes(title_text="MACD", row=3, col=1)
