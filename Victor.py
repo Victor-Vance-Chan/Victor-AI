@@ -11,20 +11,23 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(layout="wide", page_title="詹VICTOR帥 | AI 深度交互實戰看板")
 st_autorefresh(interval=60 * 1000, key="data_refresh")
 
+# CSS 注入：強化手機端穩定性與 UI 質感
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
+    /* 防止手機瀏覽器非必要的橫向滾動 */
+    .main { background-color: #f8f9fa; overflow-x: hidden; }
+    
+    /* 強制禁止圖表容器內的觸控縮放，提升手機操作穩定性 */
+    [data-testid="stPlotlyChart"] { touch-action: pan-y !important; }
+
     .summary-card { background-color: #ffffff; padding: 20px; border-radius: 15px; border-left: 8px solid #007bff; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
     .indicator-box { background: #ffffff; padding: 18px; border-radius: 10px; margin-bottom: 15px; border-left: 6px solid #007bff; line-height: 1.8; border: 1px solid #eaeaea; }
     .strategy-box { background: #ffffff; padding: 20px; border-radius: 12px; border: 2px solid #007bff; margin-top: 10px; box-shadow: 5px 5px 15px rgba(0,0,0,0.05); }
     .diag-section-title { font-weight: bold; color: #1f77b4; margin-top: 20px; margin-bottom: 12px; border-bottom: 2px solid #007bff; padding-bottom: 5px; font-size: 18px; }
     
-    /* 強化分頁標籤鎖固感 */
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
     .stTabs [data-baseweb="tab"] { height: 45px; font-weight: 600; }
     
-    /* 加減碼分頁專用樣式 */
-    .risk-metric { text-align: center; padding: 15px; border-radius: 10px; background: #fff; border: 1px solid #ddd; }
     .calc-highlight { background: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 5px; }
     </style>
     """, unsafe_allow_html=True)
@@ -88,13 +91,20 @@ if raw_df is not None:
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 技術看板", "💎 籌碼深度分佈", "🎯 深度實戰建議", "⚖️ 資金戰略與加減碼"])
 
-    lock_config = {'displayModeBar': False, 'scrollZoom': False, 'staticPlot': False, 'doubleClick': False}
+    # 核心配置：完全禁止縮放與編輯，適合手機與穩定看板使用
+    lock_config = {
+        'displayModeBar': False, 
+        'scrollZoom': False, 
+        'staticPlot': False, 
+        'doubleClick': False,
+        'showAxisDragHandles': False,
+        'showAxisRangeEntryBoxes': False
+    }
 
     with tab1:
-        # 修正：確保 row_titles 能正確顯示指標名稱
-        fig = make_subplots(rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.02, 
-                           row_heights=[0.35, 0.12, 0.12, 0.12, 0.12, 0.15],
-                           subplot_titles=("", "RSI 強弱", "MACD 趨勢", "MFI 動能", "OBV 能量", "Net Flow 資金流"))
+        # 移除 subplot_titles，改由 yaxis_title 呈現
+        fig = make_subplots(rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
+                           row_heights=[0.35, 0.12, 0.12, 0.12, 0.12, 0.15])
         
         # 1. K線與SMA
         fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線"), row=1, col=1)
@@ -118,14 +128,15 @@ if raw_df is not None:
         colors = ['#FF0000' if x >= 0 else '#00FF00' for x in df['Net_Flow']]
         fig.add_trace(go.Bar(x=df.index, y=df['Net_Flow'], name="資金流", marker_color=colors), row=6, col=1)
         
-        fig.update_layout(height=1000, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=30, b=10))
-        # 修正：手動標記 Y 軸標題確保不遺漏
-        fig.update_yaxes(title_text="Price", row=1, col=1)
+        fig.update_layout(height=1000, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=10, b=10))
+        
+        # 僅在左側 Y 軸顯示指標名稱
+        fig.update_yaxes(title_text="價格", row=1, col=1)
         fig.update_yaxes(title_text="RSI", row=2, col=1)
         fig.update_yaxes(title_text="MACD", row=3, col=1)
         fig.update_yaxes(title_text="MFI", row=4, col=1)
-        fig.update_yaxes(title_text="OBV", row=5, col=1)
-        fig.update_yaxes(title_text="Flow", row=6, col=1)
+        fig.update_yaxes(title_text="OBV能量", row=5, col=1)
+        fig.update_yaxes(title_text="資金流", row=6, col=1)
         
         st.plotly_chart(fig, use_container_width=True, config=lock_config)
 
