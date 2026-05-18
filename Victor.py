@@ -8,16 +8,22 @@ import numpy as np
 import time
 import requests
 import re
+import os
 from streamlit_autorefresh import st_autorefresh  
 
-# --- 0. Telegram 預設設定 ---
-TG_TOKEN = "7608681850:AAGLPRCfK3N3mQ0ZHc4gER_sKQP9vp-fskM"
-TG_CHAT_ID = "7810557847"
+# --- 0. Telegram 安全設定 (從 Secrets 讀取，防止洩漏個資) ---
+try:
+    TG_TOKEN = st.secrets["TG_TOKEN"]
+    TG_CHAT_ID = st.secrets["TG_CHAT_ID"]
+except Exception:
+    # 本機測試若未設定 secrets.toml，則自動讀取環境變數或提示訊息
+    TG_TOKEN = os.environ.get("TG_TOKEN", "請於 Streamlit Secrets 後台設定")
+    TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "請於 Streamlit Secrets 後台設定")
 
 # --- 1. 頁面基礎設定 ---
 st.set_page_config(layout="wide", page_title="詹VICTOR帥 | AI 戰略終極版")
 
-# 每 60 秒自動刷新
+# 每 60 秒自動刷新數據
 st_autorefresh(interval=60 * 1000, key="data_refresh")
 
 st.markdown("""
@@ -41,6 +47,9 @@ if 'target_sid' not in st.session_state: st.session_state.target_sid = "2330"
 
 # --- 3. 工具函數 ---
 def send_telegram_msg(message):
+    if "請於" in TG_TOKEN or "請於" in TG_CHAT_ID:
+        st.warning("⚠️ 未偵測到正確的 Telegram 憑證，請先設定 Secrets。")
+        return False
     try:
         url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
         payload = {"chat_id": TG_CHAT_ID, "text": message, "parse_mode": "Markdown"}
@@ -58,14 +67,12 @@ def load_stock_data_safe(sid):
             df = ticker_obj.history(period="2y", interval="1d", auto_adjust=False)
             
             if df is not None and not df.empty and len(df) > 30:
-                # 關鍵修正：扁平化 yfinance 的 MultiIndex 欄位結構
+                # 扁平化 yfinance 最新版造成的 MultiIndex 結構，避免 KeyError
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
                 
-                # 確保欄位名稱正確
                 df.columns = [str(col).capitalize() for col in df.columns]
                 
-                # 嘗試取得股本資訊
                 try:
                     info = ticker_obj.info
                     shares = info.get('sharesOutstanding', 0)
@@ -74,7 +81,7 @@ def load_stock_data_safe(sid):
                     cap_billions = 0
                     
                 return df, full_sid, cap_billions
-        except Exception as e: 
+        except Exception: 
             continue
     return None, None, 0
 
@@ -115,7 +122,7 @@ if st.sidebar.button("🚀 詹帥精選推播至 TG", use_container_width=True, 
     else: 
         st.sidebar.warning("清單是空的喔！")
 
-# 渲染監控清單按鈕
+# 渲染側邊監控清單按鈕
 for sid in list(st.session_state.watch_list):
     col_sid, col_del = st.sidebar.columns([0.75, 0.25])
     if col_sid.button(f"📊 {sid}", key=f"view_{sid}", use_container_width=True):
@@ -147,7 +154,7 @@ raw_df, actual_ticker, current_cap = load_stock_data_safe(st.session_state.targe
 if raw_df is not None and not raw_df.empty:
     df_d = raw_df.copy()
     
-    # 計算技術指標
+    # 技術指標計算
     df_d.ta.sma(length=5, append=True)
     df_d.ta.sma(length=20, append=True)
     df_d.ta.rsi(length=14, append=True)
@@ -158,18 +165,18 @@ if raw_df is not None and not raw_df.empty:
     
     df_d['Net_Flow'] = (df_d['Close'].diff() * df_d['Volume']).fillna(0)
     
-    # 動態對應 20MA 欄位名稱
+    # 動態配對指標欄位，確保不因版本不同而當機
     sma20_col = 'SMA_20' if 'SMA_20' in df_d.columns else 'BJM_20_2.0'
     df_d['Bias_20'] = ((df_d['Close'] - df_d[sma20_col]) / df_d[sma20_col]) * 100
     df_d['Ref_20'] = df_d['Close'].shift(20)
     
-    # 截取窗口資料
+    # 截取窗口
     df = df_d.tail(display_days).copy()
     curr = df.iloc[-1]
     price_now = float(curr['Close'])
     poc_price, p_buckets, v_hist = get_poc_data(df, bins_val)
 
-    # 頂部儀表板
+    # 儀表板看板頭部
     st.markdown('<div class="summary-card">', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([0.4, 0.4, 0.2])
     with c1:
@@ -184,15 +191,16 @@ if raw_df is not None and not raw_df.empty:
         st.metric("戰力評分", f"{score}")
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # 五大分頁完整保留
     tab_tech, tab_chip, tab_radar, tab_scan, tab_import = st.tabs(["📈 技術看板", "📊 籌碼深度分析", "💠 多空雷達診斷", "🚀 選股雷達", "📥 批量匯入"])
 
+    # --- TAB 1: 技術看板 ---
     with tab_tech:
         fig = make_subplots(rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.02, 
                             row_heights=[0.35, 0.13, 0.13, 0.13, 0.13, 0.13])
         fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df[sma20_col], name="20MA", line=dict(color='orange', width=2)), row=1, col=1)
         
-        # 疊加布林通道
         bbu_col = df_d.filter(like='BBU').columns[0] if len(df_d.filter(like='BBU').columns) > 0 else None
         bbl_col = df_d.filter(like='BBL').columns[0] if len(df_d.filter(like='BBL').columns) > 0 else None
         if bbu_col and bbl_col:
@@ -229,6 +237,7 @@ if raw_df is not None and not raw_df.empty:
         fig.update_layout(template="plotly_white", height=1000, xaxis_rangeslider_visible=False, hovermode='x unified')
         st.plotly_chart(fig, use_container_width=True)
 
+    # --- TAB 2: 籌碼深度分析 ---
     with tab_chip:
         col_c1, col_c2 = st.columns([0.6, 0.4])
         with col_c1:
@@ -248,6 +257,7 @@ if raw_df is not None and not raw_df.empty:
                 obv_change = curr[obv_col] - df[obv_col].iloc[-5]
                 st.write(f"📊 **能量趨勢 (OBV)：** {'✅ 價量齊揚' if obv_change > 0 else '❌ 能量背離'}")
 
+    # --- TAB 3: 多空雷達診斷 ---
     with tab_radar:
         col_r1, col_r2 = st.columns([0.5, 0.5])
         with col_r1:
@@ -293,6 +303,7 @@ if raw_df is not None and not raw_df.empty:
                     else:
                         st.warning("雖現價低於扣抵，但未來扣抵即將扣低。均線下彎引力降溫，暗示走勢跌勢收斂，靜待止穩共振訊號。")
 
+    # --- TAB 4: 選股雷達 ---
     with tab_scan:
         st.subheader("🚀 詹帥 AI 自動選股雷達")
         sc_col1, sc_col2 = st.columns([0.8, 0.2])
@@ -409,6 +420,7 @@ if raw_df is not None and not raw_df.empty:
                     "股本(億)": st.column_config.NumberColumn("股本(億)", format="%.1f 億")
                 })
 
+    # --- TAB 5: 批量匯入 ---
     with tab_import:
         st.subheader("📥 批量匯入個股代號")
         st.info("請在下方粘貼個股代號（支援換行、逗號或空白分隔）")
@@ -422,4 +434,4 @@ if raw_df is not None and not raw_df.empty:
                 else: st.error("❌ 找不到有效的數字代號。")
             else: st.warning("⚠️ 輸入框是空的喔！")
 else:
-    st.error("❌ 獲取失敗，請重新輸入代號。")
+    st.error("❌ 獲取失敗，請重新確認或輸入個股代號。")
