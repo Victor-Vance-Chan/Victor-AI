@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as str
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
@@ -16,7 +16,6 @@ try:
     TG_TOKEN = st.secrets["TG_TOKEN"]
     TG_CHAT_ID = st.secrets["TG_CHAT_ID"]
 except Exception:
-    # 本機測試若未設定 secrets.toml，則自動讀取環境變數或提示訊息
     TG_TOKEN = os.environ.get("TG_TOKEN", "請於 Streamlit Secrets 後台設定")
     TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "請於 Streamlit Secrets 後台設定")
 
@@ -67,7 +66,6 @@ def load_stock_data_safe(sid):
             df = ticker_obj.history(period="2y", interval="1d", auto_adjust=False)
             
             if df is not None and not df.empty and len(df) > 30:
-                # 扁平化 yfinance 最新版造成的 MultiIndex 結構，避免 KeyError
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
                 
@@ -122,7 +120,6 @@ if st.sidebar.button("🚀 詹帥精選推播至 TG", use_container_width=True, 
     else: 
         st.sidebar.warning("清單是空的喔！")
 
-# 渲染側邊監控清單按鈕
 for sid in list(st.session_state.watch_list):
     col_sid, col_del = st.sidebar.columns([0.75, 0.25])
     if col_sid.button(f"📊 {sid}", key=f"view_{sid}", use_container_width=True):
@@ -165,18 +162,15 @@ if raw_df is not None and not raw_df.empty:
     
     df_d['Net_Flow'] = (df_d['Close'].diff() * df_d['Volume']).fillna(0)
     
-    # 動態配對指標欄位，確保不因版本不同而當機
     sma20_col = 'SMA_20' if 'SMA_20' in df_d.columns else 'BJM_20_2.0'
     df_d['Bias_20'] = ((df_d['Close'] - df_d[sma20_col]) / df_d[sma20_col]) * 100
     df_d['Ref_20'] = df_d['Close'].shift(20)
     
-    # 截取窗口
     df = df_d.tail(display_days).copy()
     curr = df.iloc[-1]
     price_now = float(curr['Close'])
     poc_price, p_buckets, v_hist = get_poc_data(df, bins_val)
 
-    # 儀表板看板頭部
     st.markdown('<div class="summary-card">', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([0.4, 0.4, 0.2])
     with c1:
@@ -191,10 +185,9 @@ if raw_df is not None and not raw_df.empty:
         st.metric("戰力評分", f"{score}")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # 五大分頁完整保留
     tab_tech, tab_chip, tab_radar, tab_scan, tab_import = st.tabs(["📈 技術看板", "📊 籌碼深度分析", "💠 多空雷達診斷", "🚀 選股雷達", "📥 批量匯入"])
 
-    # --- TAB 1: 技術看板 ---
+    # --- TAB 1: 技術看板（已精簡刪除右側所有指標備註） ---
     with tab_tech:
         fig = make_subplots(rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.02, 
                             row_heights=[0.35, 0.13, 0.13, 0.13, 0.13, 0.13])
@@ -234,7 +227,8 @@ if raw_df is not None and not raw_df.empty:
         obv_col = 'OBV'
         fig.add_trace(go.Scatter(x=df.index, y=df[obv_col], name="OBV", line=dict(color='#7f7f7f')), row=6, col=1)
         
-        fig.update_layout(template="plotly_white", height=1000, xaxis_rangeslider_visible=False, hovermode='x unified')
+        # 關鍵修正：將 showlegend 設為 False 徹底清除最右邊的指標備註
+        fig.update_layout(template="plotly_white", height=1000, xaxis_rangeslider_visible=False, hovermode='x unified', showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
     # --- TAB 2: 籌碼深度分析 ---
