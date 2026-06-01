@@ -58,12 +58,20 @@ raw_df, actual_ticker = load_stock_data_safe(stock_id)
 
 if raw_df is not None:
     df_d = raw_df.copy()
+    
+    # --- 升級：全面掛載量化雷達五大引擎核心指標 ---
     df_d.ta.sma(length=20, append=True)
     df_d.ta.rsi(length=14, append=True)
     df_d.ta.macd(append=True)
     df_d.ta.obv(append=True)
     df_d.ta.mfi(length=14, append=True)
-    df_d['Net_Flow'] = (df_d['Close'].diff() * df_d['Volume'])
+    df_d.ta.bbands(length=20, std=2, append=True) # 新增布林通道引擎
+    
+    df_d['Net_Flow'] = (df_d['Close'].diff() * df_d['Volume']).fillna(0)
+    df_d['Bias_20'] = ((df_d['Close'] - df_d['SMA_20']) / df_d['SMA_20']) * 100
+    df_d['Vol_MA20'] = df_d['Volume'].rolling(20).mean()
+    df_d['RVOL'] = (df_d['Volume'] / df_d['Vol_MA20']).fillna(1.0)
+    df_d['Is_Vol_Dry'] = df_d['Volume'] < (df_d['Vol_MA20'] * 0.6) # 窒息量凹洞定義
     
     df = df_d.tail(display_days).copy()
     curr = df.iloc[-1]
@@ -86,34 +94,62 @@ if raw_df is not None:
 
     lock_config = {'displayModeBar': False, 'scrollZoom': False, 'staticPlot': False, 'doubleClick': False, 'responsive': True}
 
+    # ==================== 📊 TAB 1: 技術看板 (已完全升級為雷達引擎規格) ====================
     with tab1:
-        fig = make_subplots(rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.35, 0.12, 0.12, 0.12, 0.12, 0.15])
+        # 設定 6 個子圖軸：K線(含布林)、RVOL+凹洞標記、RSI、MACD、OBV/MFI、資金淨流
+        fig = make_subplots(rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.02, 
+                            row_heights=[0.35, 0.12, 0.11, 0.11, 0.14, 0.17])
+        
+        # 1. 主圖：K線 + 20MA + 布林通道
         fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], name="20MA", line=dict(color='orange', width=2)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['BBU_20_2.0'], name="布林上軌", line=dict(color='rgba(173,216,230,0.7)', dash='dash')), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['BBL_20_2.0'], name="布林下軌", line=dict(color='rgba(173,216,230,0.7)', dash='dash')), row=1, col=1)
         if cost_price > 0:
             fig.add_hline(y=cost_price, line_dash="dash", line_color="#333", annotation_text=f"成本:{cost_price}", row=1, col=1)
         
-        # 指標加入左側顯示
-        fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], name="RSI", line=dict(color='#9467bd')), row=2, col=1)
-        fig.add_trace(go.Bar(x=df.index, y=df['MACDh_12_26_9'], name="MACD"), row=3, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['MFI_14'], name="MFI", fill='tozeroy', line=dict(color='#17becf')), row=4, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="OBV", line=dict(color='#e377c2', width=1.5)), row=5, col=1)
+        # 2. 副圖二：RVOL 相對成交量 + 凹洞窒息量標記
+        fig.add_trace(go.Bar(x=df.index, y=df['RVOL'], name="RVOL", marker_color='#9467bd', opacity=0.6), row=2, col=1)
+        fig.add_hline(y=1.0, line_dash="dot", line_color="gray", row=2, col=1)
+        # 標出符合窒息量（Is_Vol_Dry == True）的點
+        dry_df = df[df['Is_Vol_Dry'] == True]
+        if not dry_df.empty:
+            fig.add_trace(go.Scatter(x=dry_df.index, y=dry_df['RVOL'], name="量縮凹洞", mode='markers', marker=dict(color='gold', size=8, symbol='circle')), row=2, col=1)
+        
+        # 3. 副圖三：RSI 攻擊力
+        fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], name="RSI", line=dict(color='#2ca02c', width=1.5)), row=3, col=1)
+        fig.add_hline(y=70, line_dash="dash", line_color="rgba(219, 68, 85, 0.5)", row=3, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color="rgba(15, 157, 88, 0.5)", row=3, col=1)
+        
+        # 4. 副圖四：MACD 趨勢柱狀體
+        fig.add_trace(go.Bar(x=df.index, y=df['MACDh_12_26_9'], name="MACD柱"), row=4, col=1)
+        
+        # 5. 副圖五：OBV (能量潮) 與 MFI (資金動能指標)
+        fig.add_trace(go.Scatter(x=df.index, y=df['MFI_14'], name="MFI", line=dict(color='#17becf', width=1.5)), row=5, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="OBV", line=dict(color='#e377c2'), yaxis="y2"), row=5, col=1)
+        
+        # 6. 副圖六：資金淨流量 (Net Flow 柱狀圖)
         colors = ['#FF0000' if x >= 0 else '#00FF00' for x in df['Net_Flow']]
         fig.add_trace(go.Bar(x=df.index, y=df['Net_Flow'], name="資金流", marker_color=colors), row=6, col=1)
         
-        # 修正：調整 margin-l (左邊距) 從 10 增加到 50，避免名稱被遮擋
-        fig.update_layout(height=1000, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, 
-                          margin=dict(l=50, r=10, t=10, b=10))
-        # 設定 y 軸標題顯示
-        fig.update_yaxes(title_text="價格", row=1, col=1)
-        fig.update_yaxes(title_text="RSI", row=2, col=1)
-        fig.update_yaxes(title_text="MACD", row=3, col=1)
-        fig.update_yaxes(title_text="MFI", row=4, col=1)
-        fig.update_yaxes(title_text="OBV", row=5, col=1)
-        fig.update_yaxes(title_text="淨流", row=6, col=1)
+        # 板面美化配置與標籤修正
+        fig.update_layout(
+            height=1100, template="plotly_white", hovermode='x unified', 
+            showlegend=False, xaxis_rangeslider_visible=False, 
+            margin=dict(l=60, r=10, t=10, b=10)
+        )
+        
+        # 設定各軸標題
+        fig.update_yaxes(title_text="價格 / 布林", row=1, col=1)
+        fig.update_yaxes(title_text="RVOL 量比", row=2, col=1)
+        fig.update_yaxes(title_text="RSI(14)", row=3, col=1)
+        fig.update_yaxes(title_text="MACD柱", row=4, col=1)
+        fig.update_yaxes(title_text="MFI 動能", row=5, col=1)
+        fig.update_yaxes(title_text="資金淨流", row=6, col=1)
         
         st.plotly_chart(fig, use_container_width=True, config=lock_config)
 
+    # ==================== 💎 TAB 2: 籌碼深度分佈 (完整保留) ====================
     with tab2:
         col_c1, col_c2 = st.columns([0.55, 0.45])
         with col_c1:
@@ -127,8 +163,8 @@ if raw_df is not None:
             st.markdown(f"<div class='indicator-box'><b>📍 籌碼重心 (POC) 解析</b><br>密集區在 {poc_price:.2f}。目前為{'「多頭優勢」' if price_now > poc_price else '「空頭反彈」'}。</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='indicator-box'><b>🔥 動能指標 (MFI)</b><br>數值 {curr['MFI_14']:.1f}。{'資金流入，籌碼穩定。' if curr['MFI_14'] > 50 else '資金流出，嚴防無量。'}</div>", unsafe_allow_html=True)
 
+    # ==================== 🎯 TAB 3: 深度實戰建議 (完整保留) ====================
     with tab3:
-        # (此分頁內容與 21 項指標邏輯完整保留)
         col_r1, col_r2 = st.columns([0.45, 0.55])
         with col_r1:
             radar_vals = [100 if price_now > curr['SMA_20'] else 20, curr['RSI_14'], curr['MFI_14'], 100 if curr['MACDh_12_26_9'] > 0 else 20, 100 if curr['OBV'] > df['OBV'].iloc[-5] else 30, 100 if curr['Net_Flow'] > 0 else 30]
@@ -153,18 +189,18 @@ if raw_df is not None:
             st.markdown(f"<div class='indicator-box'><b>RSI 攻擊力 ({curr['RSI_14']:.1f})</b><br>{'強勢格局，具過高潛力。' if curr['RSI_14']>60 else '盤整待變，等待放量。'}</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='indicator-box'><b>MACD 趨勢 ({curr['MACDh_12_26_9']:.2f})</b><br>{'波段多方控盤中。' if curr['MACDh_12_26_9']>0 else '空方整理，動能收斂中。'}</div>", unsafe_allow_html=True)
 
+    # ==================== ⚖️ TAB 4: 資金戰略與加減碼 (完整保留) ====================
     with tab4:
         st.markdown('<p class="diag-section-title">⚖️ 詹帥倉位調控模擬器</p>', unsafe_allow_html=True)
         col_calc1, col_calc2 = st.columns([0.4, 0.6])
         with col_calc1:
             st.subheader("🛠️ 戰略參數輸入")
-            cur_avg_p = st.number_input("現有成本價", value=cost_price if cost_price > 0 else 0.0, format="%.2f", key="sim_cost")
+            cur_avg_p = st.number_input("現有成本價", value=cost_price if cost_price > 0 else 30.0, format="%.2f", key="sim_cost")
             cur_qty = st.number_input("現有張數", value=int(hold_vol/1000), step=1, key="sim_qty")
             st.write("---")
             change_shares = st.number_input("變動張數 (張)", value=1, step=1, key="sim_change_q")
             change_price = st.number_input("變動執行價格", value=price_now, format="%.2f", key="sim_change_p")
             
-            # 保留：變動總價自動顯示
             change_total_amt = abs(change_shares) * change_price * 1000
             st.markdown(f"""<div class='calc-highlight' style='border-left: 5px solid #ff4b4b;'>🚀 變動總金額：<b>{change_total_amt:,.0f}</b> 元</div>""", unsafe_allow_html=True)
             
