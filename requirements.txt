@@ -1,0 +1,11 @@
+streamlit==1.32.0
+yfinance
+pandas
+pandas-ta
+plotly
+numpy
+requests
+streamlit-autorefresh
+lxml
+html5lib
+beautifulsoup4

@@ -1,0 +1,253 @@
+import os
+
+src_file = r"D:\IDE資料\0.股票系統\AI戰情室\pages\1_tech_engine.py"
+dst_file = r"D:\IDE資料\0.股票系統\手機戰情室\victor.py"
+
+with open(src_file, "r", encoding="utf-8") as f:
+    src_lines = f.readlines()
+
+# Extract fetch_shareholder_history
+fetch_func = []
+in_fetch = False
+for line in src_lines:
+    if line.startswith("def fetch_shareholder_history(sid):"):
+        in_fetch = True
+    if in_fetch:
+        fetch_func.append(line)
+        if line.startswith("        return pd.DataFrame()") and len(fetch_func) > 50:
+            break
+
+# Extract calculations block (from df['Net_Flow'] to plot_x =)
+calc_block = []
+in_calc = False
+for line in src_lines:
+    if "if 'Net_Flow' not in df.columns" in line:
+        in_calc = True
+    if in_calc:
+        calc_block.append(line)
+        if "plot_x = df.index.strftime('%Y-%m-%d')" in line:
+            break
+
+# Extract the 17 layer fig plotting block
+fig_block = []
+in_fig = False
+for line in src_lines:
+    if "specs = [[{}]] * 17" in line:
+        in_fig = True
+    if in_fig:
+        fig_block.append(line)
+        if "fig.update_layout(" in line:
+            in_fig = False
+            break
+
+victor_code = """import streamlit as st
+import yfinance as yf
+import pandas as pd
+import pandas_ta as ta
+import plotly.graph_objects as go  
+from plotly.subplots import make_subplots
+import numpy as np
+import os
+import requests
+from datetime import datetime, timedelta
+from streamlit_autorefresh import st_autorefresh  
+
+# --- 1. 頁面基礎設定 ---
+st.set_page_config(layout="wide", page_title="詹VICTOR帥 | AI 深度交互實戰看板")
+st_autorefresh(interval=60 * 1000, key="data_refresh")
+
+CACHE_DIR = "./cache"
+if not os.path.exists(CACHE_DIR):
+    os.makedirs(CACHE_DIR)
+
+st.markdown('''
+    <style>
+    .main { background-color: #f8f9fa; overflow-x: hidden; }
+    [data-testid="stPlotlyChart"] { touch-action: pan-y !important; }
+    .summary-card { background-color: #ffffff; padding: 20px; border-radius: 15px; border-left: 8px solid #007bff; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    .indicator-box { background: #ffffff; padding: 18px; border-radius: 10px; margin-bottom: 15px; border-left: 6px solid #007bff; line-height: 1.8; border: 1px solid #eaeaea; }
+    .strategy-box { background: #ffffff; padding: 20px; border-radius: 12px; border: 2px solid #007bff; margin-top: 10px; box-shadow: 5px 5px 15px rgba(0,0,0,0.05); }
+    .diag-section-title { font-weight: bold; color: #1f77b4; margin-top: 20px; margin-bottom: 12px; border-bottom: 2px solid #007bff; padding-bottom: 5px; font-size: 18px; }
+    .calc-highlight { background: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 5px; }
+    div.stButton > button:first-child { background-color: #007bff; color: white; border-radius: 10px; border: none; width: 100%; font-weight: bold; }
+    </style>
+''', unsafe_allow_html=True)
+
+"""
+
+# Add fetch_shareholder_history but fix CACHE_DIR
+fetch_func_str = "".join(fetch_func)
+fetch_func_str = fetch_func_str.replace("CACHE_DIR = r\"D:\\IDE資料\\0.股票系統\\AI戰情室\\cache\"", "")
+victor_code += fetch_func_str + "\n\n"
+
+victor_code += """@st.cache_data(ttl=300)
+def load_stock_data_safe(sid):
+    for suffix in [".TW", ".TWO"]:
+        try:
+            full_sid = f"{sid}{suffix}"
+            df = yf.download(full_sid, period="2y", interval="1d", auto_adjust=False, progress=False)
+            if not df.empty:
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                return df, full_sid
+        except: continue
+    return None, None
+
+def get_poc_data(df_slice, bins):
+    p_min, p_max = df_slice['Low'].min(), df_slice['High'].max()
+    p_buckets = np.linspace(p_min, p_max, bins)
+    v_hist, _ = np.histogram(df_slice['Close'], bins=p_buckets, weights=df_slice['Volume'])
+    poc = (p_buckets[np.argmax(v_hist)] + p_buckets[np.argmax(v_hist)+1]) / 2
+    return poc, p_buckets, v_hist
+
+st.title("🛡️ 詹VICTOR帥 | AI 戰情室")
+c_in1, c_in2, c_in3, c_in4 = st.columns([1, 1, 1, 1.5])
+with c_in1: stock_id = st.text_input("📍 代號", value="2330")
+with c_in2: cost_price = st.number_input("💰 成本價", value=0.0, format="%.2f")
+with c_in3: hold_vol = st.number_input("股數 (股)", value=1000, step=1000)
+with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=120)
+
+raw_df, actual_ticker = load_stock_data_safe(stock_id)
+
+if raw_df is not None:
+    df_d = raw_df.copy()
+    
+    # 籌碼資料合併
+    df_chip = fetch_shareholder_history(stock_id)
+    if not df_chip.empty:
+        df_chip['date'] = pd.to_datetime(df_chip['date'])
+        df_d.index = pd.to_datetime(df_d.index)
+        df_d = df_d.join(df_chip.set_index('date'), how='left').ffill()
+    
+    df = df_d.copy()
+
+"""
+
+# Add calc_block (needs un-indenting slightly or fixing)
+calc_str = "".join(calc_block)
+victor_code += calc_str + "\n\n"
+
+victor_code += """    df = df.tail(display_days).copy()
+    curr = df.iloc[-1]
+    price_now = float(curr['Close'])
+    poc_price, p_buckets, v_hist = get_poc_data(df, 120)
+    # mock vah_price for charting if missing
+    vah_price = poc_price * 1.05
+
+    unrealized_pnl = (price_now - cost_price) * hold_vol if cost_price > 0 else 0
+    pnl_ratio = (unrealized_pnl / (cost_price * hold_vol)) * 100 if cost_price > 0 else 0
+
+    st.markdown(f'''
+        <div class="summary-card">
+            <b>即時盤勢：{actual_ticker} | 現價：{price_now:.2f} | 籌碼重心：{poc_price:.2f}</b><br>
+            <span style="color:{'#d9534f' if unrealized_pnl < 0 else '#5cb85c'}; font-size: 20px; font-weight: bold;">
+                當前帳面損益：{unrealized_pnl:,.0f} ({pnl_ratio:.2f}%)
+            </span>
+        </div>
+    ''', unsafe_allow_html=True)
+
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 技術看板", "💎 籌碼深度分佈", "🎯 深度實戰建議", "⚖️ 資金戰略與加減碼"])
+    lock_config = {'displayModeBar': False, 'scrollZoom': False, 'staticPlot': False, 'doubleClick': False, 'responsive': True}
+
+    with tab1:
+"""
+
+fig_str = "".join(fig_block)
+# replace K線 'open=df' Open'] with open=df['Open'] -> it should be ok
+victor_code += fig_str
+
+victor_code += """
+        fig.update_layout(height=2500, template="plotly_white", hovermode='x unified', showlegend=False, 
+                          xaxis_rangeslider_visible=False, xaxis2_rangeslider_visible=False,
+                          margin=dict(l=50, r=10, t=10, b=10))
+        
+        st.plotly_chart(fig, use_container_width=True, config=lock_config)
+
+    with tab2:
+        col_c1, col_c2 = st.columns([0.55, 0.45])
+        with col_c1:
+            fig_vp = go.Figure(go.Bar(y=(p_buckets[:-1] + p_buckets[1:]) / 2, x=v_hist, orientation='h', opacity=0.7))
+            fig_vp.add_hline(y=price_now, line_color="red", line_width=2, annotation_text="現價")
+            fig_vp.add_hline(y=poc_price, line_dash="dash", line_color="blue", annotation_text="POC重心")
+            fig_vp.update_layout(height=600, hovermode='y unified', showlegend=False, margin=dict(l=50, r=5, t=10, b=10))
+            st.plotly_chart(fig_vp, use_container_width=True, config=lock_config)
+        with col_c2:
+            st.markdown('<p class="diag-section-title">🕵️ 詹帥籌碼核心觀察</p>', unsafe_allow_html=True)
+            st.markdown(f"<div class='indicator-box'><b>📍 籌碼重心 (POC) 解析</b><br>密集區在 {poc_price:.2f}。目前為{'「多頭優勢」' if price_now > poc_price else '「空頭反彈」'}。</div>", unsafe_allow_html=True)
+
+    with tab3:
+        col_r1, col_r2 = st.columns([0.45, 0.55])
+        with col_r1:
+            radar_vals = [100 if price_now > curr['SMA_20'] else 20, curr['RSI_14'], curr['MFI_14'], 100 if curr['MACDh_12_26_9'] > 0 else 20, 100 if curr['OBV'] > df['OBV'].iloc[-5] else 30, 100 if curr['Net_Flow'] > 0 else 30]
+            fig_r = go.Figure(go.Scatterpolar(r=radar_vals, theta=['趨勢', 'RSI', 'MFI', 'MACD', 'OBV', '資金'], fill='toself'))
+            fig_r.update_layout(height=400, showlegend=False, polar=dict(radialaxis=dict(visible=True, range=[0, 100]), angularaxis=dict(direction="clockwise")))
+            st.plotly_chart(fig_r, use_container_width=True, config=lock_config)
+        with col_r2:
+            st.markdown('<p class="diag-section-title">🚀 詹帥動態實戰戰略艙</p>', unsafe_allow_html=True)
+            support = max(curr['SMA_20'], poc_price)
+            if cost_price == 0:
+                cmd, detail, border_color = "請輸入成本價", "輸入後將提供專屬戰略。", "#007bff"
+            elif pnl_ratio >= 15:
+                cmd, detail, border_color = "【大幅獲利】啟動移動止盈", f"獲利已達 {pnl_ratio:.1f}%，建議守住 {price_now * 0.93:.2f} 讓利潤奔跑。", "#d9534f"
+            elif 0 <= pnl_ratio < 15:
+                cmd, detail, border_color = "【初步獲利】趨勢向上續抱", f"目前溫和獲利，不破支撐位 {support:.2f} 續抱，目標上看 {price_now * 1.1:.2f}。", "#f0ad4e"
+            elif -5 <= pnl_ratio < 0:
+                cmd, detail, border_color = "【微幅套牢】良性回檔觀察", f"套牢 {pnl_ratio:.1f}%，POC 重心 {poc_price:.2f} 附近具支撐，不破不砍。", "#5bc0de"
+            else:
+                cmd, detail, border_color = "【深度套牢】執行戰略撤退", f"虧損達 {pnl_ratio:.1f}%。若未站回 {support:.2f}，建議減碼 1/2 保護資金。", "#5cb85c"
+            st.markdown(f"<div class='strategy-box' style='border-color: {border_color};'><span style='color:{border_color}; font-size:22px; font-weight:bold;'>指令：{cmd}</span><br><br>● <b>操作指令：</b>{detail}<br>● <b>關鍵支撐：</b><span style='color:green; font-weight:bold;'>{support:.2f}</span><br>● <b>預估壓力：</b><span style='color:red; font-weight:bold;'>{price_now * 1.08:.2f}</span></div>", unsafe_allow_html=True)
+
+    with tab4:
+        st.markdown('<p class="diag-section-title">⚖️ 詹帥倉位調控模擬器</p>', unsafe_allow_html=True)
+        col_calc1, col_calc2 = st.columns([0.4, 0.6])
+        with col_calc1:
+            st.subheader("🛠️ 戰略參數輸入")
+            cur_avg_p = st.number_input("現有成本價", value=cost_price if cost_price > 0 else 30.0, format="%.2f", key="sim_cost")
+            cur_qty = st.number_input("現有張數", value=int(hold_vol/1000), step=1, key="sim_qty")
+            st.write("---")
+            change_shares = st.number_input("變動張數 (張)", value=1, step=1, key="sim_change_q")
+            change_price = st.number_input("變動執行價格", value=price_now, format="%.2f", key="sim_change_p")
+            
+            change_total_amt = abs(change_shares) * change_price * 1000
+            st.markdown(f\"\"\"<div class='calc-highlight' style='border-left: 5px solid #ff4b4b;'>🚀 變動總金額：<b>{change_total_amt:,.0f}</b> 元</div>\"\"\", unsafe_allow_html=True)
+            
+            total_qty_new = cur_qty + change_shares
+            if total_qty_new > 0:
+                new_avg_price = ((cur_avg_p * cur_qty) + (change_price * change_shares)) / total_qty_new
+                new_cost_total = new_avg_price * total_qty_new * 1000
+                new_market_total = price_now * total_qty_new * 1000
+                new_pnl_val = new_market_total - new_cost_total
+                new_pnl_pct = (new_pnl_val / new_cost_total * 100) if new_cost_total > 0 else 0
+            else:
+                new_avg_price, new_pnl_val, new_pnl_pct = 0, 0, 0
+
+        with col_calc2:
+            st.subheader("📊 模擬戰略結果")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("模擬後新成本", f"{new_avg_price:.2f}")
+            c2.metric("成本變動幅度", f"{((new_avg_price/cur_avg_p)-1)*100:+.2f}%" if cur_avg_p > 0 else "0%")
+            c3.metric("總持股張數", f"{total_qty_new} 張")
+            st.write("---")
+            now_cost_total = cur_avg_p * cur_qty * 1000
+            now_pnl_val = (price_now * cur_qty * 1000) - now_cost_total
+            now_pnl_pct = (now_pnl_val / now_cost_total * 100) if now_cost_total > 0 else 0
+            r1, r2 = st.columns(2)
+            r1.metric("預期盈虧金額", f"{new_pnl_val:,.0f} 元", delta=f"{new_pnl_val - now_pnl_val:,.0f}")
+            r2.metric("預期盈虧百分比", f"{new_pnl_pct:.2f}%", delta=f"{new_pnl_pct - now_pnl_pct:.2f}%")
+            
+            st.markdown('<p class="diag-section-title">⚠️ 加碼風險評鑑</p>', unsafe_allow_html=True)
+            support_val = max(curr['SMA_20'], poc_price)
+            if change_shares > 0:
+                if change_price < support_val * 0.95: risk_s, risk_c = "🔴 高風險 (危險攤平)", "red"
+                elif change_price <= support_val * 1.03: risk_s, risk_c = "🟢 低風險 (策略加碼)", "green"
+                else: risk_s, risk_c = "🟡 中風險 (追價加碼)", "orange"
+                st.markdown(f"<div style='background:{risk_c}; color:white; padding:15px; border-radius:10px; text-align:center; font-weight:bold;'>評級：{risk_s}</div>", unsafe_allow_html=True)
+
+else:
+    st.error("❌ 數據載入失敗，請檢查代號是否正確。")
+
+"""
+
+with open(dst_file, "w", encoding="utf-8") as f:
+    f.write(victor_code)
+print("victor.py generated successfully.")
