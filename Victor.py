@@ -114,7 +114,8 @@ if raw_df is not None:
     df_d['MACDs_raw'] = df_d['MACDs_12_26_9']
     
     df_d.ta.bbands(length=20, std=2, append=True)
-    df_d['BBP_EMA20'] = df_d['BBP_20_2.0'].ewm(span=20, adjust=False).mean().fillna(0.5)
+    bbp_col = [c for c in df_d.columns if c.startswith('BBP_')][-1]
+    df_d['BBP_EMA20'] = df_d[bbp_col].ewm(span=20, adjust=False).mean().fillna(0.5)
     
     df_d['Turnover_Value'] = df_d['Close'] * df_d['Volume']
     df_d['Turnover_Change_Rate'] = (df_d['Turnover_Value'].pct_change() * 100).clip(-300, 300).fillna(0)
@@ -277,7 +278,8 @@ if raw_df is not None:
         fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="大戶籌碼代理", fill='tozeroy', fillcolor='rgba(139, 92, 246, 0.2)', line=dict(color='#8B5CF6', width=2)), row=12, col=1)
         
         # 第 13 層：布林極限 %B
-        fig.add_trace(go.Scatter(x=df.index, y=df['BBP_20_2.0'], name="%B主線", line=dict(color='#9467bd', width=2)), row=13, col=1)
+        bbp_col = [c for c in df.columns if c.startswith('BBP_')][-1]
+        fig.add_trace(go.Scatter(x=df.index, y=df[bbp_col], name="%B主線", line=dict(color='#9467bd', width=2)), row=13, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['BBP_EMA20'], name="%B平滑線", line=dict(color='#ffd166', width=2)), row=13, col=1)
         
         # 第 14 層：RSI 動能
