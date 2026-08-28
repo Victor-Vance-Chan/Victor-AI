@@ -11,17 +11,23 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(layout="wide", page_title="詹VICTOR帥 | AI 深度交互實戰看板")
 st_autorefresh(interval=60 * 1000, key="data_refresh")
 
+bg_color = "#0F172A"
+card_bg = "#1E293B"
+text_color = "#F8FAFC"
+border_color = "#334155"
+
 # CSS 注入：強化手機端穩定性與 UI 質感
-st.markdown("""
+st.markdown(f"""
     <style>
-    .main { background-color: #f8f9fa; overflow-x: hidden; }
-    [data-testid="stPlotlyChart"] { touch-action: pan-y !important; }
-    .summary-card { background-color: #ffffff; padding: 20px; border-radius: 15px; border-left: 8px solid #007bff; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
-    .indicator-box { background: #ffffff; padding: 18px; border-radius: 10px; margin-bottom: 15px; border-left: 6px solid #007bff; line-height: 1.8; border: 1px solid #eaeaea; }
-    .strategy-box { background: #ffffff; padding: 20px; border-radius: 12px; border: 2px solid #007bff; margin-top: 10px; box-shadow: 5px 5px 15px rgba(0,0,0,0.05); }
-    .diag-section-title { font-weight: bold; color: #1f77b4; margin-top: 20px; margin-bottom: 12px; border-bottom: 2px solid #007bff; padding-bottom: 5px; font-size: 18px; }
-    .calc-highlight { background: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 5px; }
-    div.stButton > button:first-child { background-color: #007bff; color: white; border-radius: 10px; border: none; width: 100%; font-weight: bold; }
+    .main {{ background-color: {bg_color}; overflow-x: hidden; color: {text_color}; }}
+    [data-testid="stPlotlyChart"] {{ touch-action: pan-y !important; }}
+    .summary-card {{ background-color: {card_bg}; padding: 20px; border-radius: 15px; border-left: 8px solid #007bff; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; color: {text_color}; }}
+    .indicator-box {{ background: {card_bg}; padding: 18px; border-radius: 10px; margin-bottom: 15px; border-left: 6px solid #007bff; line-height: 1.8; border: 1px solid {border_color}; color: {text_color}; }}
+    .strategy-box {{ background: {card_bg}; padding: 20px; border-radius: 12px; border: 2px solid #007bff; margin-top: 10px; box-shadow: 5px 5px 15px rgba(0,0,0,0.05); color: {text_color}; }}
+    .diag-section-title {{ font-weight: bold; color: #1f77b4; margin-top: 20px; margin-bottom: 12px; border-bottom: 2px solid #007bff; padding-bottom: 5px; font-size: 18px; }}
+    .calc-highlight {{ background: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 5px; color: #1E293B; }}
+    div.stButton > button:first-child {{ background-color: #007bff; color: white; border-radius: 10px; border: none; width: 100%; font-weight: bold; }}
+    
     </style>
     """, unsafe_allow_html=True)
 
@@ -45,6 +51,11 @@ def load_stock_data_safe(sid):
             if not df.empty:
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
+                
+                df[['Open', 'High', 'Low', 'Close']] = df[['Open', 'High', 'Low', 'Close']].ffill()
+                if 'Volume' in df.columns:
+                    df['Volume'] = df['Volume'].fillna(0)
+                    
                 return df, full_sid
         except: continue
     return None, None
@@ -56,13 +67,59 @@ def get_poc_data(df_slice, bins):
     poc = (p_buckets[np.argmax(v_hist)] + p_buckets[np.argmax(v_hist)+1]) / 2
     return poc, p_buckets, v_hist
 
-# --- 3. 頂部快速輸入區 ---
-st.title("🛡️ 詹VICTOR帥 | AI 戰情室")
+# --- 3. 頂部視覺與極致震撼標題 ---
+header_bg = "linear-gradient(135deg, #020617 0%, #1e3a8a 100%)"
+st.markdown(f"""
+    <div style="
+        background: {header_bg};
+        padding: 30px 15px;
+        border-radius: 20px;
+        box-shadow: 0 15px 35px rgba(59, 130, 246, 0.4), inset 0 2px 5px rgba(255,255,255,0.2);
+        margin-bottom: 25px;
+        margin-top: 10px;
+        text-align: center;
+        border: 2px solid rgba(147, 197, 253, 0.2);
+        position: relative;
+        overflow: hidden;
+    ">
+        <div style="
+            position: absolute; top: -50%; left: -50%; width: 200%; height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0) 60%);
+            transform: rotate(30deg); pointer-events: none;
+            animation: pulse 4s infinite alternate;
+        "></div>
+        <div class="main-header" style="
+            position: relative;
+            z-index: 10;
+            margin: 0; 
+            font-size: 34px; 
+            font-weight: 900; 
+            letter-spacing: 2px; 
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        ">
+            <span style="font-size: 40px;">🚀</span> 
+            <span class="title-white" style="text-shadow: none;">詹VICTOR帥</span> 
+            <span class="ai-badge" style="font-size: 18px; font-weight: 900; background: rgba(59,130,246,0.6); padding: 6px 14px; border-radius: 30px; border: 1px solid rgba(255,255,255,0.4); box-shadow: 0 0 10px rgba(0,0,0,0.5);">AI 戰情室</span>
+        </div>
+    </div>
+    <style>
+        .title-white {{ color: #FFFFFF !important; }}
+        .ai-badge {{ color: #FDE047 !important; text-shadow: 0 0 5px rgba(253, 224, 71, 0.5); }}
+        @keyframes pulse {{
+            0% {{ transform: scale(1) rotate(30deg); opacity: 0.8; }}
+            100% {{ transform: scale(1.1) rotate(30deg); opacity: 1; }}
+        }}
+    </style>
+""", unsafe_allow_html=True)
 c_in1, c_in2, c_in3, c_in4 = st.columns([1, 1, 1, 1.5])
 with c_in1: stock_id = st.text_input("📍 代號", value="2330")
 with c_in2: cost_price = st.number_input("💰 成本價", value=0.0, format="%.2f")
 with c_in3: hold_vol = st.number_input("股數 (股)", value=1000, step=1000)
-with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=200)
+with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=120)
 
 raw_df, actual_ticker = load_stock_data_safe(stock_id)
 idx_df = load_index_data()
@@ -277,17 +334,16 @@ if raw_df is not None:
         # 第 12 層：暫無大戶持股比 (因 yfinance 無法獲取，使用 OBV 替代顯示)
         fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="大戶籌碼代理", fill='tozeroy', fillcolor='rgba(139, 92, 246, 0.2)', line=dict(color='#8B5CF6', width=2)), row=12, col=1)
         
-        # 第 13 層：布林極限 %B
-        bbp_col = [c for c in df.columns if c.startswith('BBP_')][-1]
-        fig.add_trace(go.Scatter(x=df.index, y=df[bbp_col], name="%B主線", line=dict(color='#9467bd', width=2)), row=13, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['BBP_EMA20'], name="%B平滑線", line=dict(color='#ffd166', width=2)), row=13, col=1)
+        # 第 13 層：布林極限 %B (包含主線與均線以顯示黃金交叉)
+        bbp_col = [c for c in df.columns if c.startswith('BBP_') and c != 'BBP_EMA20'][-1]
+        fig.add_trace(go.Scatter(x=df.index, y=df[bbp_col], name="%B快線", line=dict(color='#ff0066', width=2)), row=13, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['BBP_EMA20'], name="%B慢線(均線)", line=dict(color='#ffd166', width=2)), row=13, col=1)
         
         # 第 14 層：RSI 動能
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], name="RSI", line=dict(color='#457b9d', width=2)), row=14, col=1)
         
-        # 第 15 層：VWAP 乖離率與 25日乖離線
+        # 第 15 層：25日乖離線
         fig.add_trace(go.Scatter(x=df.index, y=df['BIAS_25'], name="25日乖離線", line=dict(color='#E11D48', width=2)), row=15, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['VWAP_BIAS'], name="🌊VWAP乖離率 (%)", line=dict(color='#06B6D4', width=2, dash='dot')), row=15, col=1)
         
         # 加入乖離率的頸線
         bias_std = df['BIAS_25'].std() if len(df) > 0 else 5
