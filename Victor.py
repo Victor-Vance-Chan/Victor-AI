@@ -11,9 +11,36 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(layout="wide", page_title="詹VICTOR帥 | AI 深度交互實戰看板")
 st_autorefresh(interval=60 * 1000, key="data_refresh")
 
+if 'stock_id' not in st.session_state:
+    st.session_state['stock_id'] = "2330"
+
+def set_stock(sid):
+    st.session_state['stock_id'] = sid
+
 bg_color = "#0F172A"
 card_bg = "#1E293B"
 text_color = "#F8FAFC"
+
+@st.cache_data(ttl=600)
+def get_global_market_data():
+    symbols = {'^DJI': '道瓊工業', '^IXIC': '那斯達克', 'TSM': '台積電ADR', 'UMC': '聯電ADR', 'NVDA': '輝達'}
+    res = []
+    try:
+        df = yf.download(list(symbols.keys()), period="5d", interval="1d", progress=False)
+        closes = df['Close']
+        for sym, name in symbols.items():
+            if sym in closes:
+                s_data = closes[sym].dropna()
+                if len(s_data) >= 2:
+                    c = float(s_data.iloc[-1])
+                    p = float(s_data.iloc[-2])
+                    pct = ((c - p) / p) * 100
+                    color = "#ef4444" if pct > 0 else "#10b981" if pct < 0 else "#ffffff"
+                    sign = "+" if pct > 0 else ""
+                    res.append(f"<span style='color: #ffffff;'>{name}</span> <span style='color: {color}; margin-right: 20px;'>{c:.2f} ({sign}{pct:.2f}%)</span>")
+        return "&nbsp;&nbsp;|&nbsp;&nbsp;".join(res)
+    except:
+        return "暫無國際行情"
 border_color = "#334155"
 
 # CSS 注入：強化手機端穩定性與 UI 質感
@@ -60,6 +87,24 @@ def load_stock_data_safe(sid):
         except: continue
     return None, None
 
+@st.cache_data(ttl=300)
+def load_multi_tf_data(sid, tf):
+    tf_map = {"15分K": ("15m", "60d"), "30分K": ("30m", "60d"), "60分K": ("60m", "60d"), "日線": ("1d", "2y"), "週線": ("1wk", "2y")}
+    interval, period = tf_map.get(tf, ("1d", "2y"))
+    for suffix in [".TW", ".TWO"]:
+        try:
+            full_sid = f"{sid}{suffix}"
+            df = yf.download(full_sid, period=period, interval=interval, auto_adjust=False, progress=False)
+            if not df.empty:
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                df[['Open', 'High', 'Low', 'Close']] = df[['Open', 'High', 'Low', 'Close']].ffill()
+                if 'Volume' in df.columns:
+                    df['Volume'] = df['Volume'].fillna(0)
+                return df
+        except: continue
+    return None
+
 def get_poc_data(df_slice, bins):
     p_min, p_max = df_slice['Low'].min(), df_slice['High'].max()
     p_buckets = np.linspace(p_min, p_max, bins)
@@ -70,53 +115,69 @@ def get_poc_data(df_slice, bins):
 # --- 3. 頂部視覺與極致震撼標題 ---
 header_bg = "linear-gradient(135deg, #020617 0%, #1e3a8a 100%)"
 st.markdown(f"""
-    <div style="
-        background: {header_bg};
-        padding: 30px 15px;
-        border-radius: 20px;
-        box-shadow: 0 15px 35px rgba(59, 130, 246, 0.4), inset 0 2px 5px rgba(255,255,255,0.2);
-        margin-bottom: 25px;
-        margin-top: 10px;
-        text-align: center;
-        border: 2px solid rgba(147, 197, 253, 0.2);
-        position: relative;
-        overflow: hidden;
-    ">
-        <div style="
-            position: absolute; top: -50%; left: -50%; width: 200%; height: 200%;
-            background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0) 60%);
-            transform: rotate(30deg); pointer-events: none;
-            animation: pulse 4s infinite alternate;
-        "></div>
-        <div class="main-header" style="
-            position: relative;
-            z-index: 10;
-            margin: 0; 
-            font-size: 34px; 
-            font-weight: 900; 
-            letter-spacing: 2px; 
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-            flex-wrap: wrap;
-        ">
-            <span style="font-size: 40px;">🚀</span> 
-            <span class="title-white" style="text-shadow: none;">詹VICTOR帥</span> 
-            <span class="ai-badge" style="font-size: 18px; font-weight: 900; background: rgba(59,130,246,0.6); padding: 6px 14px; border-radius: 30px; border: 1px solid rgba(255,255,255,0.4); box-shadow: 0 0 10px rgba(0,0,0,0.5);">AI 戰情室</span>
-        </div>
+<div style="background: {header_bg}; padding: 30px 15px; border-radius: 20px; box-shadow: 0 15px 35px rgba(59, 130, 246, 0.4), inset 0 2px 5px rgba(255,255,255,0.2); margin-bottom: 25px; margin-top: 10px; text-align: center; border: 2px solid rgba(147, 197, 253, 0.2); position: relative; overflow: hidden;">
+    <div style="position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0) 60%); transform: rotate(30deg); pointer-events: none; animation: pulse 4s infinite alternate;"></div>
+    <div class="main-header" style="position: relative; z-index: 10; margin: 0; font-size: 34px; font-weight: 900; letter-spacing: 2px; display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;">
+        <span style="font-size: 40px;">🚀</span> 
+        <span class="title-white" style="text-shadow: none;">詹VICTOR帥</span> 
+        <span class="ai-badge" style="font-size: 18px; font-weight: 900; background: rgba(59,130,246,0.6); padding: 6px 14px; border-radius: 30px; border: 1px solid rgba(255,255,255,0.4); box-shadow: 0 0 10px rgba(0,0,0,0.5);">AI 戰情室</span>
     </div>
-    <style>
-        .title-white {{ color: #FFFFFF !important; }}
-        .ai-badge {{ color: #FDE047 !important; text-shadow: 0 0 5px rgba(253, 224, 71, 0.5); }}
-        @keyframes pulse {{
-            0% {{ transform: scale(1) rotate(30deg); opacity: 0.8; }}
-            100% {{ transform: scale(1.1) rotate(30deg); opacity: 1; }}
-        }}
-    </style>
+    <div style="background: rgba(15,23,42,0.6); border-top: 1px solid rgba(255,255,255,0.1); padding: 8px 10px; margin-top: 12px; overflow: hidden; white-space: nowrap; font-size: 15px; font-weight: bold; border-radius: 6px;">
+        <marquee scrollamount="3" scrolldelay="30" truespeed>
+            {get_global_market_data()}
+        </marquee>
+    </div>
+</div>
+<style>
+    .title-white {{ color: #FFFFFF !important; }}
+    .ai-badge {{ color: #FDE047 !important; text-shadow: 0 0 5px rgba(253, 224, 71, 0.5); }}
+    @keyframes pulse {{
+        0% {{ transform: scale(1) rotate(30deg); opacity: 0.8; }}
+        100% {{ transform: scale(1.1) rotate(30deg); opacity: 1; }}
+    }}
+</style>
 """, unsafe_allow_html=True)
-c_in1, c_in4 = st.columns([1, 1.5])
-with c_in1: stock_id = st.text_input("📍 代號", value="2330")
+
+@st.cache_data(ttl=300)
+def get_top_gainers():
+    basket = {
+        "2330": "台積電", "2454": "聯發科", "2317": "鴻海", "2382": "廣達", 
+        "2603": "長榮", "3231": "緯創", "2609": "陽明", "2376": "技嘉", 
+        "2303": "聯電", "2881": "富邦金", "3443": "創意", "3661": "世芯", 
+        "3037": "欣興", "1519": "華城", "1513": "中興電", "3324": "雙鴻", 
+        "3017": "奇鋐", "2308": "台達電", "2383": "台光電", "6231": "系微",
+        "2368": "金像電", "8299": "群聯", "3653": "健策", "8046": "南電"
+    }
+    tickers = " ".join([f"{sid}.TW" for sid in basket.keys()] + [f"{sid}.TWO" for sid in basket.keys()])
+    try:
+        df = yf.download(tickers, period="5d", interval="1d", progress=False)
+        if df.empty or 'Close' not in df: raise ValueError("Empty df")
+        closes = df['Close']
+        changes = {}
+        for t in closes.columns:
+            sid = str(t).replace('.TW', '').replace('.TWO', '')
+            if sid not in basket: continue
+            s_data = closes[t].dropna()
+            if len(s_data) >= 2:
+                prev_c = s_data.iloc[-2]
+                curr_c = s_data.iloc[-1]
+                if prev_c > 0: changes[sid] = ((curr_c - prev_c) / prev_c) * 100
+        if not changes: raise ValueError("No changes")
+        sorted_sids = sorted(changes.keys(), key=lambda x: changes[x], reverse=True)
+        return [(basket[sid], sid) for sid in sorted_sids[:6]]
+    except Exception:
+        return [("台積電", "2330"), ("聯發科", "2454"), ("鴻海", "2317"), ("廣達", "2382"), ("長榮", "2603"), ("緯創", "3231")]
+
+st.markdown("<p style='margin-bottom: 5px; font-weight: bold; color: #475569;'>🎯 即時強勢股雷達 (TOP 6)：</p>", unsafe_allow_html=True)
+col_btns = st.columns(6)
+quick_stocks = get_top_gainers()
+for i, (s_name, s_id) in enumerate(quick_stocks):
+    with col_btns[i]:
+        st.button(f"{s_name}", on_click=set_stock, args=(s_id,), use_container_width=True)
+
+c_in1, c_in2, c_in4 = st.columns([1, 1.5, 1.5])
+with c_in1: stock_id = st.text_input("📍 代號", key="stock_id")
+with c_in2: chart_overlay = st.radio("主圖疊加", ["均線", "布林通道"], horizontal=True)
 with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=120)
 
 cost_price = 0.0
@@ -127,7 +188,11 @@ idx_df = load_index_data()
 
 if raw_df is not None:
     df_d = raw_df.copy()
+    df_d.ta.sma(length=5, append=True)
+    df_d.ta.sma(length=10, append=True)
     df_d.ta.sma(length=20, append=True)
+    df_d.ta.sma(length=42, append=True)
+    df_d.ta.sma(length=60, append=True)
     df_d.ta.rsi(length=14, append=True)
     df_d.ta.macd(append=True)
     df_d.ta.obv(append=True)
@@ -188,6 +253,14 @@ if raw_df is not None:
     df_d['BIAS_25'] = ((df_d['Close'] - df_d['Close'].rolling(25).mean()) / df_d['Close'].rolling(25).mean()) * 100
     df_d['Vol_Price_Efficiency'] = (df_d['VPE_Base'] * df_d['RVOL'] * 100).clip(-300, 300).fillna(0)
     
+    # 1. ATR 與型態辨識
+    df_d.ta.atr(length=14, append=True)
+    try:
+        df_d.ta.cdl_pattern(name=["engulfing", "morningstar", "shootingstar", "hammer", "darkcloudcover"], append=True)
+    except: pass
+
+    # 重算一次真正的 rolling VWAP (近期120日) 作為防守線
+    df_d['VWAP'] = (df_d['Typical_Price'] * df_d['Volume']).rolling(120, min_periods=1).sum() / (df_d['Volume'].rolling(120, min_periods=1).sum() + 1e-9)
 
     df = df_d.tail(display_days).copy()
     curr = df.iloc[-1]
@@ -230,6 +303,43 @@ if raw_df is not None:
     else:
         big_order_status = f"<span style='color:#16A34A; font-weight:bold;'>大單出場 (淨流出 {curr_netflow:,.0f})</span>"
 
+    # --- 戰鬥力分數與極端反轉雷達 ---
+    # 優化後的戰鬥力演算法 (加入當日漲跌幅動能)
+    score = 0
+    # 1. 當日漲跌幅 (30分)：以台灣股市正負10%為區間，映射到 0~30 分
+    chg_score = np.clip(((change_pct + 10) / 20.0) * 30, 0, 30)
+    score += chg_score
+    # 2. 均線排列 (40分)
+    if price_now > curr.get('SMA_5', price_now): score += 20
+    if price_now > curr.get('SMA_20', price_now): score += 20
+    # 3. 動能指標 RSI (10分)
+    score += (curr.get('RSI_14', 50) / 100.0) * 10
+    # 4. 波段攻擊 MACD (10分)
+    if curr.get('MACDh_12_26_9', 0) > 0: score += 10
+    # 5. 籌碼淨流 (10分)
+    if curr_netflow > 0: score += 10
+    
+    score = np.clip(score, 0, 100)
+    
+    if score >= 75: combat_badge = f"<span style='background:#DC2626; color:white; padding:4px 10px; border-radius:6px; font-weight:bold; margin-left: 10px;'>🔥 戰鬥力 {score:.1f} (強勢)</span>"
+    elif score >= 40: combat_badge = f"<span style='background:#F59E0B; color:white; padding:4px 10px; border-radius:6px; font-weight:bold; margin-left: 10px;'>⚖️ 戰鬥力 {score:.1f} (震盪)</span>"
+    else: combat_badge = f"<span style='background:#10B981; color:white; padding:4px 10px; border-radius:6px; font-weight:bold; margin-left: 10px;'>🧊 戰鬥力 {score:.1f} (弱勢)</span>"
+    
+    reversal_msg = ""
+    upper_bb = curr.get([c for c in df.columns if c.startswith('BBU_')][-1], 99999)
+    lower_bb = curr.get([c for c in df.columns if c.startswith('BBL_')][-1], 0)
+    
+    if curr['RSI_14'] > 80 and curr['BIAS_25'] > 10 and price_now >= upper_bb:
+        reversal_msg = "<div style='background:#FEE2E2; border:2px solid #DC2626; color:#DC2626; padding:15px; border-radius:10px; font-weight:bold; font-size:18px; text-align:center; margin-bottom:15px; box-shadow: 0 4px 6px rgba(220, 38, 38, 0.2);'>🚨 🔴 紅色警戒：極端過熱 (超買區)！股價已達布林上軌且乖離過大，隨時有拉回風險，強烈建議居高思危！</div>"
+    elif curr['RSI_14'] < 25 and curr['BIAS_25'] < -10 and price_now <= lower_bb:
+        reversal_msg = "<div style='background:#D1FAE5; border:2px solid #059669; color:#059669; padding:15px; border-radius:10px; font-weight:bold; font-size:18px; text-align:center; margin-bottom:15px; box-shadow: 0 4px 6px rgba(5, 150, 105, 0.2);'>🚀 🟢 綠色警戒：極端恐慌 (超賣區)！股價跌破布林下軌且乖離過大，絕佳反彈契機浮現，隨時可能報復性反彈！</div>"
+
+    # 爆量雷達
+    rvol_val = curr.get('RVOL', 1)
+    if rvol_val > 3.0 and change_pct > 2.0:
+        reversal_msg += f"<div style='background:#FEF3C7; border:2px solid #F59E0B; color:#B45309; padding:12px; border-radius:10px; font-weight:bold; font-size:16px; text-align:center; margin-bottom:15px; box-shadow: 0 4px 6px rgba(245, 158, 11, 0.2); animation: pulse 1s infinite alternate;'>⚠️ 爆量異動雷達：當前成交量高達均量的 {rvol_val:.1f} 倍，疑似主力大單突擊！</div>"
+        
+    st.markdown(reversal_msg, unsafe_allow_html=True)
     st.markdown(f"""<div style="display: flex; justify-content: space-between; align-items: center; background: #F8FAFC; padding: 12px 20px; border-radius: 8px; border: 1px solid #E2E8F0; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
 <div style="font-size: 16px; display: flex; align-items: baseline; flex-wrap: wrap;">
 <span style="color: #64748B; margin-right: 5px;">現價</span>
@@ -245,19 +355,19 @@ if raw_df is not None:
 <span style="color: #F59E0B; font-weight: bold; margin-right: 10px;">{amp_pct:.2f}%</span>
 <span style="color: #475569; font-size: 24px; font-weight: 900; background: #F8FAFC; padding: 3px 15px; border-radius: 6px; border: 1px solid #CBD5E1; margin-left: 20px; letter-spacing: 1px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">{display_title}</span>
 </div>
-<div style="font-size: 16px; background: #FFFFFF; padding: 6px 15px; border-radius: 6px; border: 1px solid #CBD5E1; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
-<span style="color: #475569; margin-right: 8px; font-weight: bold;">📊 最新大單動向:</span> {big_order_status}
+<div style="font-size: 16px; background: #FFFFFF; padding: 6px 15px; border-radius: 6px; border: 1px solid #CBD5E1; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center;">
+<span style="color: #475569; margin-right: 8px; font-weight: bold;">📊 最新大單動向:</span> <span style="margin-right: 10px;">{big_order_status}</span> {combat_badge}
 </div>
 </div>""", unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 技術看板", "💎 籌碼深度分佈", "🎯 深度實戰建議", "⚖️ 資金戰略與加減碼"])
+    tab1, tab5, tab2, tab3, tab4 = st.tabs(["📊 技術看板", "📈 多時區K線", "💎 籌碼深度分佈", "🎯 深度實戰建議", "⚖️ 資金戰略與加減碼"])
 
     lock_config = {'displayModeBar': False, 'scrollZoom': False, 'staticPlot': False, 'doubleClick': False, 'responsive': True}
 
     with tab1:
-        # 強制將 index 轉為字串，避免 Plotly 產生週末的空白 K 線
         df.index = df.index.strftime('%Y-%m-%d')
         fig = make_subplots(rows=17, cols=1, shared_xaxes=True, vertical_spacing=0.01, row_heights=[0.04, 0.12, 0.04, 0.06, 0.04, 0.04, 0.04, 0.06, 0.04, 0.05, 0.05, 0.04, 0.05, 0.04, 0.04, 0.04, 0.04])
+        
         # 第 1 層：NF-QV 風險指標
         colors_nfqv = ['#DC2626' if val >= 80 else '#F59E0B' if val >= 60 else '#22C55E' for val in df['nf_QV_Score']]
         fig.add_trace(go.Bar(x=df.index, y=df['nf_QV_Score'], name="NF-QV風險", marker_color=colors_nfqv), row=1, col=1)
@@ -266,9 +376,31 @@ if raw_df is not None:
         
         # 第 2 層主 K 線圖
         fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線", increasing_line_color='red', decreasing_line_color='black'), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], name="20MA", line=dict(color='orange', width=2)), row=2, col=1)
+        
+        # 動態計算 20 日近期壓力與支撐
+        res_val = df['High'].rolling(20, min_periods=1).max().iloc[-1]
+        sup_val = df['Low'].rolling(20, min_periods=1).min().iloc[-1]
+        fig.add_hline(y=res_val, line_dash="dot", line_color="#EF4444", line_width=1.5, annotation_text=f"壓力 {res_val:.2f}", row=2, col=1)
+        fig.add_hline(y=sup_val, line_dash="dot", line_color="#10B981", line_width=1.5, annotation_text=f"支撐 {sup_val:.2f}", row=2, col=1)
+        
+        if chart_overlay == "均線":
+            fig.add_trace(go.Scatter(x=df.index, y=df['SMA_5'], name="5MA", line=dict(color='#EAB308', width=1.5)), row=2, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['SMA_10'], name="10MA", line=dict(color='#3B82F6', width=1.5)), row=2, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['SMA_42'], name="42MA", line=dict(color='#8B5CF6', width=2)), row=2, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['SMA_60'], name="60MA", line=dict(color='#EF4444', width=2)), row=2, col=1)
+        else:
+            bb_lower = [c for c in df.columns if c.startswith('BBL_')][-1]
+            bb_mid = [c for c in df.columns if c.startswith('BBM_')][-1]
+            bb_upper = [c for c in df.columns if c.startswith('BBU_')][-1]
+            fig.add_trace(go.Scatter(x=df.index, y=df[bb_upper], name="BB上軌", line=dict(color='#93C5FD', width=1.5, dash='dash')), row=2, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df[bb_mid], name="BB中軌", line=dict(color='#FCD34D', width=1.5)), row=2, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df[bb_lower], name="BB下軌", line=dict(color='#93C5FD', width=1.5, dash='dash')), row=2, col=1)
+
         if cost_price > 0:
             fig.add_hline(y=cost_price, line_dash="dash", line_color="#333", annotation_text=f"成本:{cost_price}", row=2, col=1)
+            
+        # 加入 VWAP 主力防守線
+        fig.add_trace(go.Scatter(x=df.index, y=df['VWAP'], name="VWAP主力防守", line=dict(color='#F59E0B', width=2, dash='dashdot')), row=2, col=1)
         
         # 指標加入左側顯示
         colors = ['#FF0000' if x >= 0 else '#00FF00' for x in df['Net_Flow']]
@@ -385,6 +517,18 @@ if raw_df is not None:
         fig.update_yaxes(title_text="OBV", row=17, col=1)
         
         st.plotly_chart(fig, use_container_width=True, config=lock_config)
+        
+        patterns = []
+        if curr.get('CDL_ENGULFING', 0) > 0: patterns.append("多頭吞噬 (強烈偏多)")
+        elif curr.get('CDL_ENGULFING', 0) < 0: patterns.append("空頭吞噬 (強烈偏空)")
+        if curr.get('CDL_MORNINGSTAR', 0) != 0: patterns.append("晨星 (底部反轉)")
+        if curr.get('CDL_SHOOTINGSTAR', 0) != 0: patterns.append("流星 (頭部反轉)")
+        if curr.get('CDL_HAMMER', 0) != 0: patterns.append("鎚子 (底部支撐)")
+        if curr.get('CDL_DARKCLOUDCOVER', 0) != 0: patterns.append("烏雲罩頂 (強烈偏空)")
+        
+        if patterns:
+            pattern_str = "、".join(patterns)
+            st.markdown(f"<div style='background:#EFF6FF; border-left: 5px solid #3B82F6; padding: 10px; border-radius: 5px; color:#1E3A8A; font-weight:bold;'>🤖 AI 形態判定：{pattern_str}</div>", unsafe_allow_html=True)
 
     with tab2:
         col_c1, col_c2 = st.columns([0.55, 0.45])
@@ -436,6 +580,21 @@ if raw_df is not None:
             change_shares = st.number_input("變動張數 (張)", value=1, step=1, key="sim_change_q")
             change_price = st.number_input("變動執行價格", value=float(price_now), format="%.2f", key="sim_change_p")
             
+            st.write("---")
+            st.markdown("🎯 **風險報酬設定**")
+            
+            atr_val = curr.get('ATRr_14', 0)
+            if atr_val > 0:
+                suggest_stop = price_now - (atr_val * 1.5)
+                suggest_take = price_now + (atr_val * 3.0)
+                st.markdown(f"<div style='font-size:14px; color:#64748B; margin-bottom:10px;'>💡 <b>AI (ATR) 建議</b>：停損 <b>{suggest_stop:.2f}</b> / 停利 <b>{suggest_take:.2f}</b></div>", unsafe_allow_html=True)
+            else:
+                suggest_stop = price_now * 0.95
+                suggest_take = price_now * 1.10
+                
+            stop_loss = st.number_input("停損價設定", value=float(suggest_stop), format="%.2f")
+            take_profit = st.number_input("停利價設定", value=float(suggest_take), format="%.2f")
+            
             # 保留：變動總價自動顯示
             change_total_amt = abs(change_shares) * change_price * 1000
             st.markdown(f"""<div class='calc-highlight' style='border-left: 5px solid #ff4b4b;'>🚀 變動總金額：<b>{change_total_amt:,.0f}</b> 元</div>""", unsafe_allow_html=True)
@@ -464,6 +623,36 @@ if raw_df is not None:
             r1.metric("預期盈虧金額", f"{new_pnl_val:,.0f} 元", delta=f"{new_pnl_val - now_pnl_val:,.0f}")
             r2.metric("預期盈虧百分比", f"{new_pnl_pct:.2f}%", delta=f"{new_pnl_pct - now_pnl_pct:.2f}%")
             
+            st.markdown('<p class="diag-section-title">⚖️ 風險報酬比 (Risk/Reward)</p>', unsafe_allow_html=True)
+            if new_avg_price > 0 and stop_loss < new_avg_price and take_profit > new_avg_price:
+                risk_per_share = new_avg_price - stop_loss
+                reward_per_share = take_profit - new_avg_price
+                rr_ratio = reward_per_share / risk_per_share
+                
+                total_risk_amt = risk_per_share * total_qty_new * 1000
+                total_reward_amt = reward_per_share * total_qty_new * 1000
+                
+                if rr_ratio >= 2:
+                    rr_color, rr_text = "#10B981", f"✅ 絕佳 (1 : {rr_ratio:.1f})"
+                elif rr_ratio >= 1:
+                    rr_color, rr_text = "#F59E0B", f"⚠️ 尚可 (1 : {rr_ratio:.1f})"
+                else:
+                    rr_color, rr_text = "#DC2626", f"❌ 不佳 (1 : {rr_ratio:.1f})"
+                
+                st.markdown(f"""
+                <div style='background:#F8FAFC; border-left: 6px solid {rr_color}; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>
+                    <div style='display:flex; justify-content:space-between; margin-bottom: 8px;'>
+                        <span style='font-weight:bold; color:#DC2626;'>📉 最大潛在虧損：-{total_risk_amt:,.0f} 元</span>
+                        <span style='font-weight:bold; color:#10B981;'>📈 最大潛在獲利：+{total_reward_amt:,.0f} 元</span>
+                    </div>
+                    <div style='font-size: 18px; font-weight:bold; text-align:center;'>
+                        風報比：<span style='color:{rr_color};'>{rr_text}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.warning("請合理設定停損價(低於成本)與停利價(高於成本)以計算風報比。")
+            
             st.markdown('<p class="diag-section-title">⚠️ 加碼風險評鑑</p>', unsafe_allow_html=True)
             support_val = max(curr['SMA_20'], poc_price)
             if change_shares > 0:
@@ -472,5 +661,61 @@ if raw_df is not None:
                 else: risk_s, risk_c = "🟡 中風險 (追價加碼)", "orange"
                 st.markdown(f"<div style='background:{risk_c}; color:white; padding:15px; border-radius:10px; text-align:center; font-weight:bold;'>評級：{risk_s}</div>", unsafe_allow_html=True)
             st.info(f"💡 **詹帥戰略提醒**：1. 保本點：股價需維持在 **{new_avg_price:.2f}** 以上。2. 最大曝險：若回測支撐位 **{support_val:.2f}**，損益將變動為 **{((support_val - new_avg_price) * total_qty_new * 1000):,.0f}** 元。")
+
+    with tab5:
+        st.markdown('<p class="diag-section-title">📈 多時區 K 線分析</p>', unsafe_allow_html=True)
+        tf_choice = st.radio("選擇時區", ["15分K", "30分K", "60分K", "日線", "週線"], horizontal=True, index=2)
+        
+        tf_df = load_multi_tf_data(stock_id, tf_choice)
+        if tf_df is not None and not tf_df.empty:
+            if tf_choice == "週線":
+                tf_df.ta.sma(length=10, append=True)
+                tf_df.ta.sma(length=20, append=True)
+                tf_df.ta.sma(length=60, append=True)
+            else:
+                tf_df.ta.sma(length=5, append=True)
+                tf_df.ta.sma(length=10, append=True)
+                tf_df.ta.sma(length=42, append=True)
+                tf_df.ta.sma(length=60, append=True)
+                if tf_choice == "60分K":
+                    tf_df.ta.sma(length=240, append=True)
+
+            tf_df = tf_df.tail(display_days).copy()
+
+            fig_tf = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
+            
+            # 強制將 index 轉為字串
+            if '分' in tf_choice:
+                tf_df.index = tf_df.index.strftime('%Y-%m-%d %H:%M')
+            else:
+                tf_df.index = tf_df.index.strftime('%Y-%m-%d')
+                
+            fig_tf.add_trace(go.Candlestick(x=tf_df.index, open=tf_df['Open'], high=tf_df['High'], low=tf_df['Low'], close=tf_df['Close'], name="K線", increasing_line_color='red', decreasing_line_color='black'), row=1, col=1)
+            
+            if tf_choice == "週線":
+                if 'SMA_10' in tf_df.columns: fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_10'], name="10MA", line=dict(color='#EAB308', width=1.5)), row=1, col=1)
+                if 'SMA_20' in tf_df.columns: fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_20'], name="20MA", line=dict(color='#3B82F6', width=1.5)), row=1, col=1)
+                if 'SMA_60' in tf_df.columns: fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_60'], name="60MA", line=dict(color='#EF4444', width=2)), row=1, col=1)
+            else:
+                if 'SMA_5' in tf_df.columns: fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_5'], name="5MA", line=dict(color='#EAB308', width=1.5)), row=1, col=1)
+                if 'SMA_10' in tf_df.columns: fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_10'], name="10MA", line=dict(color='#3B82F6', width=1.5)), row=1, col=1)
+                if 'SMA_42' in tf_df.columns: fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_42'], name="42MA", line=dict(color='#8B5CF6', width=2)), row=1, col=1)
+                if 'SMA_60' in tf_df.columns: fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_60'], name="60MA", line=dict(color='#EF4444', width=2)), row=1, col=1)
+                if tf_choice == "60分K" and 'SMA_240' in tf_df.columns:
+                    fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_240'], name="240MA", line=dict(color='#14B8A6', width=2)), row=1, col=1)
+
+            colors_vol = ['#EF4444' if row['Close'] >= row['Open'] else '#10B981' for i, row in tf_df.iterrows()]
+            fig_tf.add_trace(go.Bar(x=tf_df.index, y=tf_df['Volume'], name="成交量", marker_color=colors_vol), row=2, col=1)
+            
+            fig_tf.update_layout(height=600, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, xaxis_type='category', dragmode=False, margin=dict(l=50, r=10, t=10, b=10))
+            fig_tf.update_xaxes(fixedrange=True)
+            fig_tf.update_yaxes(fixedrange=True)
+            fig_tf.update_yaxes(title_text="價格", row=1, col=1)
+            fig_tf.update_yaxes(title_text="成交量", row=2, col=1)
+            
+            st.plotly_chart(fig_tf, use_container_width=True, config=lock_config)
+        else:
+            st.warning("⚠️ 無法取得該時區資料，請稍後再試。")
+
 else:
     st.error("❌ 數據載入失敗，請檢查代號是否正確。")
