@@ -365,7 +365,7 @@ if raw_df is not None:
 </div>
 </div>""", unsafe_allow_html=True)
 
-    tab1, tab5, tab2, tab3, tab4 = st.tabs(["📊 技術看板", "📈 多時區K線", "💎 籌碼深度分佈", "🎯 深度實戰建議", "⚖️ 資金戰略與加減碼"])
+    tab1, tab5, tab6, tab2, tab3, tab4 = st.tabs(["📊 技術看板", "📈 多時區K線", "🎯 產業四象限", "💎 籌碼深度分佈", "🎯 深度實戰建議", "⚖️ 資金戰略與加減碼"])
 
     lock_config = {'displayModeBar': False, 'scrollZoom': False, 'staticPlot': False, 'doubleClick': False, 'responsive': True}
 
@@ -727,6 +727,125 @@ if raw_df is not None:
             st.plotly_chart(fig_tf, use_container_width=True, config=lock_config)
         else:
             st.warning("⚠️ 無法取得該時區資料，請稍後再試。")
+
+    with tab6:
+        st.markdown("<h4 style='color: #1E293B; margin-top: 20px;'>🎯 當前個股所屬產業之主力與市場籌碼四象限定位</h4>", unsafe_allow_html=True)
+        st.markdown("<p style='color: #64748B;'>本圖表呈現當前個股在所屬產業類別中的相對籌碼位階。大紅點為當前個股，其餘散點為同產業其他個股。</p>", unsafe_allow_html=True)
+        
+        import twstock
+        import sqlite3
+        import pandas as pd
+        
+        @st.cache_data(ttl=3600, show_spinner=False)
+        def load_quadrant_data_cached(db_path, group_name, date_str):
+            conn = sqlite3.connect(db_path)
+            query = """
+            SELECT stock_id, stock_name,
+                   (CASE WHEN COALESCE(intraday_xlarge_in_vol, 0) = 0 AND COALESCE(intraday_xlarge_out_vol, 0) = 0 THEN COALESCE(xlarge_in_vol, 0) ELSE COALESCE(intraday_xlarge_in_vol, 0) END - 
+                    CASE WHEN COALESCE(intraday_xlarge_in_vol, 0) = 0 AND COALESCE(intraday_xlarge_out_vol, 0) = 0 THEN COALESCE(xlarge_out_vol, 0) ELSE COALESCE(intraday_xlarge_out_vol, 0) END) as net_xl_vol,
+                   (COALESCE(total_buy_vol, 0) - COALESCE(total_sell_vol, 0)) as net_total_vol,
+                   COALESCE(close_price, 0.0) as close_price
+             FROM daily_stock_stats
+             WHERE date = ?
+            """
+            df_day = pd.read_sql_query(query, conn, params=(date_str,))
+            conn.close()
+            
+            df_day['net_xl_amt_100m'] = df_day['net_xl_vol'] * df_day['close_price'] * 1000 / 100000000
+            df_day['net_total_amt_100m'] = df_day['net_total_vol'] * df_day['close_price'] * 1000 / 100000000
+            
+            df_day['group'] = df_day['stock_id'].map(lambda x: twstock.codes[x].group if x in twstock.codes else None)
+            return df_day[df_day['group'] == group_name].copy()
+
+        group = "未知"
+        if clean_sid in twstock.codes:
+            group = twstock.codes[clean_sid].group
+            
+        if group == "未知" or not group:
+            st.warning(f"⚠️ 無法識別代號 {clean_sid} 的個股所屬產業，無法繪製四象限圖。")
+        else:
+            st.info(f"📂 當前個股 {clean_sid} 屬於 **「{group}」** 產業。系統已為您加載該產業之個股定位！")
+            
+            DB_PATH = r"D:\IDE資料\0.股票系統\AI戰情室\market_ticks.db"
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                latest_date_df = pd.read_sql_query("SELECT DISTINCT date FROM daily_stock_stats ORDER BY date DESC LIMIT 1", conn)
+                conn.close()
+                
+                if latest_date_df.empty:
+                    st.warning("⚠️ 資料庫中無有效歷史統計數據。")
+                else:
+                    latest_date_str = latest_date_df.iloc[0]['date']
+                    df_micro_quad = load_quadrant_data_cached(DB_PATH, group, latest_date_str)
+                    
+                    fig_stock_quad = go.Figure()
+                    
+                    sx_max = df_micro_quad['net_total_amt_100m'].max() if not df_micro_quad.empty else 1.0
+                    sx_min = df_micro_quad['net_total_amt_100m'].min() if not df_micro_quad.empty else -1.0
+                    sy_max = df_micro_quad['net_xl_amt_100m'].max() if not df_micro_quad.empty else 1.0
+                    sy_min = df_micro_quad['net_xl_amt_100m'].min() if not df_micro_quad.empty else -1.0
+                    
+                    sx_max = max(sx_max, 0.5)
+                    sx_min = min(sx_min, -0.5)
+                    sy_max = max(sy_max, 0.5)
+                    sy_min = min(sy_min, -0.5)
+                    
+                    df_others = df_micro_quad[df_micro_quad['stock_id'] != clean_sid]
+                    if not df_others.empty:
+                        fig_stock_quad.add_trace(go.Scatter(
+                            x=df_others['net_total_amt_100m'],
+                            y=df_others['net_xl_amt_100m'],
+                            mode='markers+text',
+                            text=df_others['stock_name'],
+                            textposition="top center",
+                            textfont=dict(size=10, color="#CBD5E1"),
+                            marker=dict(size=10, color="#334155", opacity=0.7, line=dict(width=1, color='#475569')),
+                            name="同業個股",
+                            hovertemplate="<b>%{text} (%{x:.2f}億, %{y:.2f}億)</b><extra></extra>"
+                        ))
+                    
+                    found_stock = df_micro_quad[df_micro_quad['stock_id'] == clean_sid]
+                    if not found_stock.empty:
+                        target_data = found_stock.iloc[0]
+                        tx = target_data['net_total_amt_100m']
+                        ty = target_data['net_xl_amt_100m']
+                        if tx > 0 and ty > 0: q_desc = "屬於共識主升段"
+                        elif tx <= 0 and ty > 0: q_desc = "屬於主力偷偷進貨"
+                        elif tx <= 0 and ty <= 0: q_desc = "屬於弱勢棄守區"
+                        else: q_desc = "屬於拉高出貨陷阱"
+                            
+                        fig_stock_quad.add_trace(go.Scatter(
+                            x=[tx],
+                            y=[ty],
+                            mode='markers+text',
+                            text=[f"🎯 {target_data['stock_name']} ({clean_sid})<br>{q_desc}"],
+                            textposition="bottom right",
+                            textfont=dict(size=14, color="#EF4444", family="Arial Black"),
+                            marker=dict(size=20, color="#EF4444", opacity=0.95, line=dict(width=3, color='black')),
+                            name=f"搜尋目標: {target_data['stock_name']}",
+                            hovertemplate="<b>%{text}</b><br>總資金: %{x:.2f}億<br>特大單: %{y:.2f}億<extra></extra>"
+                        ))
+                    
+                    fig_stock_quad.add_vline(x=0, line_width=2, line_dash="dash", line_color="#475569")
+                    fig_stock_quad.add_hline(y=0, line_width=2, line_dash="dash", line_color="#475569")
+                    
+                    fig_stock_quad.add_annotation(x=sx_max*0.7, y=sy_max*0.7, text="🔥 第一象限<br>共識主升段", showarrow=False, font=dict(color="#EF4444", size=18), opacity=0.2)
+                    fig_stock_quad.add_annotation(x=sx_min*0.7, y=sy_max*0.7, text="🕵️ 第二象限<br>主力偷偷進貨", showarrow=False, font=dict(color="#F59E0B", size=18), opacity=0.2)
+                    fig_stock_quad.add_annotation(x=sx_min*0.7, y=sy_min*0.7, text="🧊 第三象限<br>弱勢棄守區", showarrow=False, font=dict(color="#3B82F6", size=18), opacity=0.2)
+                    fig_stock_quad.add_annotation(x=sx_max*0.7, y=sy_min*0.7, text="🪤 第四象限<br>拉高出貨陷阱", showarrow=False, font=dict(color="#8B5CF6", size=18), opacity=0.2)
+                    
+                    fig_stock_quad.update_layout(
+                        xaxis_title="🌊 總資金淨流入 (億) ➔",
+                        yaxis_title="🎯 特大單(主力)淨流入 (億) ➔",
+                        height=600,
+                        template="plotly_dark",
+                        showlegend=False,
+                        hovermode='closest',
+                        margin=dict(l=40, r=40, t=40, b=40)
+                    )
+                    st.plotly_chart(fig_stock_quad, use_container_width=True, config=lock_config)
+            except Exception as e:
+                st.error(f"⚠️ 資料庫連線或讀取失敗: {e}")
 
 else:
     st.error("❌ 數據載入失敗，請檢查代號是否正確。")
