@@ -23,7 +23,11 @@ text_color = "#F8FAFC"
 
 @st.cache_data(ttl=600)
 def get_global_market_data():
-    symbols = {'^DJI': '道瓊工業', '^IXIC': '那斯達克', 'TSM': '台積電ADR', 'UMC': '聯電ADR', 'NVDA': '輝達'}
+    symbols = {
+        '^TWII': '加權指數', '2330.TW': '台積電',
+        '^DJI': '道瓊工業', '^IXIC': '那斯達克', 
+        'TSM': '台積電ADR', 'UMC': '聯電ADR', 'NVDA': '輝達'
+    }
     res = []
     try:
         df = yf.download(list(symbols.keys()), period="5d", interval="1d", progress=False)
