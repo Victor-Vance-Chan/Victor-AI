@@ -181,7 +181,7 @@ for i, (s_name, s_id) in enumerate(quick_stocks):
 
 c_in1, c_in2, c_in4 = st.columns([1, 1.5, 1.5])
 with c_in1: stock_id = st.text_input("📍 代號", key="stock_id")
-with c_in2: chart_overlay = st.radio("主圖疊加", ["均線", "布林通道"], horizontal=True)
+with c_in2: chart_overlay = st.radio("主圖疊加", ["均線", "布林通道", "主力防線", "SAR"], horizontal=True)
 with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=120)
 
 cost_price = 0.0
@@ -259,6 +259,7 @@ if raw_df is not None:
     
     # 1. ATR 與型態辨識
     df_d.ta.atr(length=14, append=True)
+    df_d.ta.psar(append=True)
     try:
         df_d.ta.cdl_pattern(name=["engulfing", "morningstar", "shootingstar", "hammer", "darkcloudcover"], append=True)
     except: pass
@@ -381,30 +382,36 @@ if raw_df is not None:
         # 第 2 層主 K 線圖
         fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線", increasing_line_color='red', decreasing_line_color='black'), row=2, col=1)
         
-        # 動態計算 20 日近期壓力與支撐
+        # 動態計算 20 日近期壓力與支撐數值 (後續使用)
         res_val = df['High'].rolling(20, min_periods=1).max().iloc[-1]
         sup_val = df['Low'].rolling(20, min_periods=1).min().iloc[-1]
-        fig.add_hline(y=res_val, line_dash="dot", line_color="#EF4444", line_width=1.5, annotation_text=f"壓力 {res_val:.2f}", row=2, col=1)
-        fig.add_hline(y=sup_val, line_dash="dot", line_color="#10B981", line_width=1.5, annotation_text=f"支撐 {sup_val:.2f}", row=2, col=1)
         
         if chart_overlay == "均線":
             fig.add_trace(go.Scatter(x=df.index, y=df['SMA_5'], name="5MA", line=dict(color='#EAB308', width=1.5)), row=2, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['SMA_10'], name="10MA", line=dict(color='#3B82F6', width=1.5)), row=2, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['SMA_42'], name="42MA", line=dict(color='#8B5CF6', width=2)), row=2, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['SMA_60'], name="60MA", line=dict(color='#EF4444', width=2)), row=2, col=1)
-        else:
+        elif chart_overlay == "布林通道":
             bb_lower = [c for c in df.columns if c.startswith('BBL_')][-1]
             bb_mid = [c for c in df.columns if c.startswith('BBM_')][-1]
             bb_upper = [c for c in df.columns if c.startswith('BBU_')][-1]
             fig.add_trace(go.Scatter(x=df.index, y=df[bb_upper], name="BB上軌", line=dict(color='#93C5FD', width=1.5, dash='dash')), row=2, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df[bb_mid], name="BB中軌", line=dict(color='#FCD34D', width=1.5)), row=2, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df[bb_lower], name="BB下軌", line=dict(color='#93C5FD', width=1.5, dash='dash')), row=2, col=1)
+        elif chart_overlay == "主力防線":
+            fig.add_hline(y=res_val, line_dash="dot", line_color="#EF4444", line_width=1.5, annotation_text=f"壓力 {res_val:.2f}", row=2, col=1)
+            fig.add_hline(y=sup_val, line_dash="dot", line_color="#10B981", line_width=1.5, annotation_text=f"支撐 {sup_val:.2f}", row=2, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['VWAP'], name="VWAP主力防守", line=dict(color='#F59E0B', width=2, dash='dashdot')), row=2, col=1)
+        elif chart_overlay == "SAR":
+            try:
+                psar_l = [c for c in df.columns if c.startswith('PSARl_')][-1]
+                psar_s = [c for c in df.columns if c.startswith('PSARs_')][-1]
+                fig.add_trace(go.Scatter(x=df.index, y=df[psar_l], mode='markers', name="SAR多頭", marker=dict(color='#10B981', size=5, symbol='circle')), row=2, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df[psar_s], mode='markers', name="SAR空頭", marker=dict(color='#EF4444', size=5, symbol='circle')), row=2, col=1)
+            except: pass
 
         if cost_price > 0:
             fig.add_hline(y=cost_price, line_dash="dash", line_color="#333", annotation_text=f"成本:{cost_price}", row=2, col=1)
-            
-        # 加入 VWAP 主力防守線
-        fig.add_trace(go.Scatter(x=df.index, y=df['VWAP'], name="VWAP主力防守", line=dict(color='#F59E0B', width=2, dash='dashdot')), row=2, col=1)
         
         # 指標加入左側顯示
         colors = ['#FF0000' if x >= 0 else '#00FF00' for x in df['Net_Flow']]
