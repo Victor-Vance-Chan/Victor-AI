@@ -767,8 +767,19 @@ if raw_df is not None:
             st.info(f"📂 當前個股 {clean_sid} 屬於 **「{group}」** 產業。系統已為您加載該產業之個股定位！")
             
             DB_PATH = r"D:\IDE資料\0.股票系統\AI戰情室\market_ticks.db"
+            import os
+            db_exists = os.path.exists(DB_PATH)
+            st.write(f"🔍 偵錯: DB_PATH = {DB_PATH}, 存在 = {db_exists}, 大小 = {os.path.getsize(DB_PATH) if db_exists else 'N/A'}")
+            
             try:
                 conn = sqlite3.connect(DB_PATH)
+                
+                # Check tables
+                cur = conn.cursor()
+                cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                tables = [t[0] for t in cur.fetchall()]
+                st.write(f"🔍 偵錯: 資料表列表 = {tables}")
+                
                 latest_date_df = pd.read_sql_query("SELECT DISTINCT date FROM daily_stock_stats ORDER BY date DESC LIMIT 1", conn)
                 conn.close()
                 
