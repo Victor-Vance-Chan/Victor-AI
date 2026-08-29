@@ -115,11 +115,12 @@ st.markdown(f"""
         }}
     </style>
 """, unsafe_allow_html=True)
-c_in1, c_in2, c_in3, c_in4 = st.columns([1, 1, 1, 1.5])
+c_in1, c_in4 = st.columns([1, 1.5])
 with c_in1: stock_id = st.text_input("📍 代號", value="2330")
-with c_in2: cost_price = st.number_input("💰 成本價", value=0.0, format="%.2f")
-with c_in3: hold_vol = st.number_input("股數 (股)", value=1000, step=1000)
 with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=120)
+
+cost_price = 0.0
+hold_vol = 1000
 
 raw_df, actual_ticker = load_stock_data_safe(stock_id)
 idx_df = load_index_data()
@@ -361,7 +362,9 @@ if raw_df is not None:
 
         # 修正：調整 margin-l (左邊距) 從 10 增加到 50，避免名稱被遮擋
         fig.update_layout(height=3600, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, xaxis2_rangeslider_visible=False,
-                          xaxis_type='category', margin=dict(l=50, r=10, t=10, b=10))
+                          xaxis_type='category', margin=dict(l=50, r=10, t=10, b=10), dragmode=False)
+        fig.update_xaxes(fixedrange=True)
+        fig.update_yaxes(fixedrange=True)
         # 設定 y 軸標題顯示
         fig.update_yaxes(title_text="NF-QV", range=[0, 100], row=1, col=1)
         fig.update_yaxes(title_text="價格", row=2, col=1)
@@ -427,11 +430,11 @@ if raw_df is not None:
         col_calc1, col_calc2 = st.columns([0.4, 0.6])
         with col_calc1:
             st.subheader("🛠️ 戰略參數輸入")
-            cur_avg_p = st.number_input("現有成本價", value=cost_price if cost_price > 0 else 30.0, format="%.2f", key="sim_cost")
+            cur_avg_p = st.number_input("現有成本價", value=float(price_now), format="%.2f", key="sim_cost")
             cur_qty = st.number_input("現有張數", value=int(hold_vol/1000), step=1, key="sim_qty")
             st.write("---")
             change_shares = st.number_input("變動張數 (張)", value=1, step=1, key="sim_change_q")
-            change_price = st.number_input("變動執行價格", value=price_now, format="%.2f", key="sim_change_p")
+            change_price = st.number_input("變動執行價格", value=float(price_now), format="%.2f", key="sim_change_p")
             
             # 保留：變動總價自動顯示
             change_total_amt = abs(change_shares) * change_price * 1000
