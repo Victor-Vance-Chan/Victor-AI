@@ -249,7 +249,7 @@ c_r1, c_r2 = st.columns([0.6, 0.4])
 with c_r1:
     st.markdown("<p style='margin-bottom: 5px; font-weight: bold; color: #475569;'>🎯 即時強勢股雷達 (TOP 6)：</p>", unsafe_allow_html=True)
 with c_r2:
-    strict_mode = st.checkbox("🔥 開啟嚴格主力突破篩選 (股價<200+資金流翻倍+低風險)", value=False)
+    strict_mode = st.checkbox("🔥 資金翻倍低風險雷達", value=False)
 
 col_btns = st.columns(6)
 quick_stocks = get_top_gainers(strict_mode)
