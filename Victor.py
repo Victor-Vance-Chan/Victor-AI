@@ -541,8 +541,12 @@ if raw_df is not None:
             pattern_str = "、".join(patterns)
             st.markdown(f"<div style='background:#EFF6FF; border-left: 5px solid #3B82F6; padding: 10px; border-radius: 5px; color:#1E3A8A; font-weight:bold;'>🤖 AI 形態判定：{pattern_str}</div>", unsafe_allow_html=True)
 
-        # 於技術看板底部加入圖片，使用自適應寬度確保手機也能正常顯示
-        st.image("D:/IDE資料/0.股票系統/手機戰情室/詹欣樺只講真心話.png", use_container_width=True)
+        import os
+        image_path = os.path.join(os.path.dirname(__file__), "詹欣樺只講真心話.png")
+        if os.path.exists(image_path):
+            st.image(image_path, use_container_width=True)
+        else:
+            st.error("找不到圖片檔案")
 
     with tab2:
         col_c1, col_c2 = st.columns([0.55, 0.45])
