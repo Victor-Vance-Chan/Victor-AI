@@ -508,24 +508,9 @@ if raw_df is not None:
                           xaxis_type='category', margin=dict(l=10, r=10, t=10, b=10), dragmode=False)
         fig.update_xaxes(fixedrange=True)
         fig.update_yaxes(fixedrange=True)
-        # 設定 y 軸標題顯示
-        fig.update_yaxes(title_text="", range=[0, 100], row=1, col=1)
-        fig.update_yaxes(title_text="", row=2, col=1)
-        fig.update_yaxes(title_text="", row=3, col=1)
-        fig.update_yaxes(title_text="", row=4, col=1)
-        fig.update_yaxes(title_text="", row=5, col=1)
-        fig.update_yaxes(title_text="", row=6, col=1)
-        fig.update_yaxes(title_text="", row=7, col=1)
-        fig.update_yaxes(title_text="", row=8, col=1)
-        fig.update_yaxes(title_text="", row=9, col=1)
-        fig.update_yaxes(title_text="", row=10, col=1)
-        fig.update_yaxes(title_text="", row=11, col=1)
-        fig.update_yaxes(title_text="", row=12, col=1)
-        fig.update_yaxes(title_text="", row=13, col=1)
-        fig.update_yaxes(title_text="", row=14, col=1)
-        fig.update_yaxes(title_text="", row=15, col=1)
-        fig.update_yaxes(title_text="", row=16, col=1)
-        fig.update_yaxes(title_text="", row=17, col=1)
+        # 徹底移除 Y 軸標題的佔位，並將刻度數字移至內側或右側以釋放左方空間
+        fig.update_yaxes(title_text=None, ticklabelposition="inside")
+        fig.update_yaxes(range=[0, 100], row=1, col=1)
         
         st.plotly_chart(fig, use_container_width=True, config=lock_config)
         
