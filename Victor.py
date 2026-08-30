@@ -143,41 +143,120 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 @st.cache_data(ttl=300)
-def get_top_gainers():
+def get_top_gainers(strict_mode=False):
     basket = {
         "2330": "台積電", "2454": "聯發科", "2317": "鴻海", "2382": "廣達", 
         "2603": "長榮", "3231": "緯創", "2609": "陽明", "2376": "技嘉", 
         "2303": "聯電", "2881": "富邦金", "3443": "創意", "3661": "世芯", 
         "3037": "欣興", "1519": "華城", "1513": "中興電", "3324": "雙鴻", 
         "3017": "奇鋐", "2308": "台達電", "2383": "台光電", "6231": "系微",
-        "2368": "金像電", "8299": "群聯", "3653": "健策", "8046": "南電"
+        "2368": "金像電", "8299": "群聯", "3653": "健策", "8046": "南電",
+        "2344": "華邦電", "2337": "旺宏", "2615": "萬海", "2882": "國泰金", "2891": "中信金",
+        "1101": "台泥", "1301": "台塑", "1303": "南亞", "2002": "中鋼", "2301": "光寶科",
+        "2356": "英業達", "2395": "研華", "2408": "南亞科", "2409": "友達", "3481": "群創",
+        "2880": "華南金", "2883": "開發金", "2884": "玉山金", "2885": "元大金", "2886": "兆豐金",
+        "2887": "台新金", "2890": "永豐金", "2892": "第一金", "2912": "統一超", "3008": "大立光",
+        "3034": "聯詠", "3711": "日月光", "4904": "遠傳", "4938": "和碩", "5871": "中租",
+        "5880": "合庫金", "6505": "台塑化", "9904": "寶成", "1504": "東元", "1605": "華新",
+        "2324": "仁寶", "2347": "聯強", "2353": "宏碁", "2379": "瑞昱", "2385": "群光",
+        "2449": "京元電子", "2610": "華航", "2618": "長榮航", "3044": "健鼎", "3293": "鈊象",
+        "3532": "台勝科", "3702": "大聯大", "4958": "臻鼎", "5347": "世界", "5483": "中美晶",
+        "6147": "頎邦", "6176": "瑞儀", "6239": "力成", "6269": "台郡", "6271": "同欣電",
+        "6282": "康舒", "6415": "矽力", "6488": "環球晶", "8069": "元太", "8215": "明基材",
+        "1514": "亞力", "1503": "士電", "3311": "閎康", "3583": "辛耘", "6187": "萬潤",
+        "3131": "弘塑", "3680": "家登", "2464": "盟立", "2360": "致茂", "2397": "友通",
+        "6125": "廣運", "3051": "力特", "3450": "聯鈞", "4979": "華星光", "3234": "光環",
+        "8028": "昇陽半", "3529": "力旺", "3665": "貿聯", "6669": "緯穎", "6643": "M31",
+        "3515": "華擎", "6138": "茂達", "5269": "祥碩", "3013": "晟銘電", "6213": "聯茂"
     }
     tickers = " ".join([f"{sid}.TW" for sid in basket.keys()] + [f"{sid}.TWO" for sid in basket.keys()])
     try:
-        df = yf.download(tickers, period="5d", interval="1d", progress=False)
+        period = "60d" if strict_mode else "5d"
+        df = yf.download(tickers, period=period, interval="1d", progress=False)
         if df.empty or 'Close' not in df: raise ValueError("Empty df")
+        
         closes = df['Close']
+        if strict_mode:
+            opens = df['Open']
+            volumes = df['Volume']
+            
         changes = {}
         for t in closes.columns:
             sid = str(t).replace('.TW', '').replace('.TWO', '')
             if sid not in basket: continue
+            
             s_data = closes[t].dropna()
-            if len(s_data) >= 2:
-                prev_c = s_data.iloc[-2]
-                curr_c = s_data.iloc[-1]
-                if prev_c > 0: changes[sid] = ((curr_c - prev_c) / prev_c) * 100
-        if not changes: raise ValueError("No changes")
+            if len(s_data) < 2: continue
+            
+            prev_c = s_data.iloc[-2]
+            curr_c = s_data.iloc[-1]
+            if prev_c <= 0: continue
+            
+            chg_pct = ((curr_c - prev_c) / prev_c) * 100
+            
+            if strict_mode:
+                if curr_c >= 200 or chg_pct <= 0: continue
+                
+                s_open = opens[t].loc[s_data.index]
+                s_vol = volumes[t].loc[s_data.index]
+                if len(s_data) < 20: continue
+                
+                net_flow = (s_data.diff() * s_vol).fillna(0)
+                curr_nf = net_flow.iloc[-1]
+                prev_nf = net_flow.iloc[-2]
+                if curr_nf <= prev_nf * 2 or curr_nf <= 0: continue
+                
+                window_nf = 20
+                nf_mean = net_flow.rolling(window=window_nf, min_periods=1).mean()
+                nf_std = net_flow.rolling(window=window_nf, min_periods=1).std().replace(0, 1e-9)
+                nf_z_score = (net_flow - nf_mean) / nf_std
+                nf_risk = np.where(nf_z_score > 0, 0, np.clip((abs(nf_z_score) / 2.0) * 100, 0, 100))
+                
+                vol_ma = s_vol.rolling(window=window_nf, min_periods=1).mean().replace(0, 1e-9)
+                vol_ratio = s_vol / vol_ma
+                body_pct = (s_data - s_open) / s_data.replace(0, 1e-9)
+                vpe_risk = np.zeros(len(s_data))
+                mask_danger = (body_pct <= 0.005) & (vol_ratio > 1.0)
+                vpe_risk[mask_danger] = np.clip(((vol_ratio[mask_danger] - 1) / 1.0) * 100, 0, 100)
+                
+                delta = s_data.diff()
+                up = delta.clip(lower=0)
+                down = -1 * delta.clip(upper=0)
+                roll_up = up.rolling(14).mean()
+                roll_down = down.rolling(14).mean()
+                rs = roll_up / roll_down.replace(0, 1e-9)
+                rsi = 100.0 - (100.0 / (1.0 + rs))
+                pos_risk = np.where(rsi < 70, 0, np.clip(((rsi - 70) / 15.0) * 100, 0, 100))
+                
+                nf_qv_score = (nf_risk * 0.4) + (vpe_risk * 0.4) + (pos_risk * 0.2)
+                curr_nf_qv = nf_qv_score[-1]
+                
+                if curr_nf_qv >= 50: continue
+                
+            else:
+                if chg_pct <= 0: continue
+                
+            changes[sid] = chg_pct
+            
+        if not changes: return [("查無強勢股", "2330")]
         sorted_sids = sorted(changes.keys(), key=lambda x: changes[x], reverse=True)
         return [(basket[sid], sid) for sid in sorted_sids[:6]]
-    except Exception:
+        
+    except Exception as e:
         return [("台積電", "2330"), ("聯發科", "2454"), ("鴻海", "2317"), ("廣達", "2382"), ("長榮", "2603"), ("緯創", "3231")]
 
-st.markdown("<p style='margin-bottom: 5px; font-weight: bold; color: #475569;'>🎯 即時強勢股雷達 (TOP 6)：</p>", unsafe_allow_html=True)
+c_r1, c_r2 = st.columns([0.6, 0.4])
+with c_r1:
+    st.markdown("<p style='margin-bottom: 5px; font-weight: bold; color: #475569;'>🎯 即時強勢股雷達 (TOP 6)：</p>", unsafe_allow_html=True)
+with c_r2:
+    strict_mode = st.checkbox("🔥 開啟嚴格主力突破篩選 (股價<200+資金流翻倍+低風險)", value=False)
+
 col_btns = st.columns(6)
-quick_stocks = get_top_gainers()
+quick_stocks = get_top_gainers(strict_mode)
 for i, (s_name, s_id) in enumerate(quick_stocks):
-    with col_btns[i]:
-        st.button(f"{s_name}", on_click=set_stock, args=(s_id,), use_container_width=True)
+    if i < 6:
+        with col_btns[i]:
+            st.button(f"{s_name}", on_click=set_stock, args=(s_id,), use_container_width=True)
 
 c_in1, c_in2, c_in4 = st.columns([1, 1.5, 1.5])
 with c_in1: stock_id = st.text_input("📍 代號", key="stock_id")
