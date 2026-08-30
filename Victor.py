@@ -503,9 +503,9 @@ if raw_df is not None:
         # 第 17 層：OBV 累積能量
         fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="OBV", line=dict(color='#7f7f7f', width=2)), row=17, col=1)
 
-        # 修正：調整 margin-l (左邊距) 從 10 增加到 50，避免名稱被遮擋
+        # 已移除 Y 軸標題，將 margin-l (左邊距) 縮減以增加圖表寬度
         fig.update_layout(height=3600, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, xaxis2_rangeslider_visible=False,
-                          xaxis_type='category', margin=dict(l=50, r=10, t=10, b=10), dragmode=False)
+                          xaxis_type='category', margin=dict(l=10, r=10, t=10, b=10), dragmode=False)
         fig.update_xaxes(fixedrange=True)
         fig.update_yaxes(fixedrange=True)
         # 設定 y 軸標題顯示
