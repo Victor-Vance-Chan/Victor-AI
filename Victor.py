@@ -83,6 +83,7 @@ def load_stock_data_safe(sid):
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
                 
+                df = df.dropna(subset=['Close'])
                 df[['Open', 'High', 'Low', 'Close']] = df[['Open', 'High', 'Low', 'Close']].ffill()
                 if 'Volume' in df.columns:
                     df['Volume'] = df['Volume'].fillna(0)
@@ -102,6 +103,7 @@ def load_multi_tf_data(sid, tf):
             if not df.empty:
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
+                df = df.dropna(subset=['Close'])
                 df[['Open', 'High', 'Low', 'Close']] = df[['Open', 'High', 'Low', 'Close']].ffill()
                 if 'Volume' in df.columns:
                     df['Volume'] = df['Volume'].fillna(0)
