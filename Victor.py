@@ -21,7 +21,7 @@ bg_color = "#0F172A"
 card_bg = "#1E293B"
 text_color = "#F8FAFC"
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=120)
 def get_global_market_data():
     symbols = {
         '^TWII': '加權指數', '2330.TW': '台積電',
@@ -63,7 +63,7 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # --- 2. 數據核心 ---
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def load_index_data():
     try:
         idx = yf.download("^TWII", period="2y", interval="1d", auto_adjust=False, progress=False)
@@ -73,7 +73,7 @@ def load_index_data():
     except:
         return None
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def load_stock_data_safe(sid):
     for suffix in [".TW", ".TWO"]:
         try:
@@ -92,7 +92,7 @@ def load_stock_data_safe(sid):
         except: continue
     return None, None
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def load_multi_tf_data(sid, tf):
     tf_map = {"15分K": ("15m", "60d"), "30分K": ("30m", "60d"), "60分K": ("60m", "60d"), "日線": ("1d", "2y"), "週線": ("1wk", "2y")}
     interval, period = tf_map.get(tf, ("1d", "2y"))
@@ -144,7 +144,7 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def get_top_gainers(strict_mode=False):
     basket = {
         "2330": "台積電", "2454": "聯發科", "2317": "鴻海", "2382": "廣達", 
