@@ -21,7 +21,7 @@ bg_color = "#0F172A"
 card_bg = "#1E293B"
 text_color = "#F8FAFC"
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=300)
 def get_global_market_data():
     symbols = {
         '^TWII': '加權指數', '2330.TW': '台積電',
@@ -63,7 +63,7 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # --- 2. 數據核心 ---
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def load_index_data():
     try:
         idx = yf.download("^TWII", period="2y", interval="1d", auto_adjust=False, progress=False)
@@ -73,7 +73,7 @@ def load_index_data():
     except:
         return None
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def load_stock_data_safe(sid):
     for suffix in [".TW", ".TWO"]:
         try:
@@ -92,7 +92,7 @@ def load_stock_data_safe(sid):
         except: continue
     return None, None
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def load_multi_tf_data(sid, tf):
     tf_map = {"15分K": ("15m", "60d"), "30分K": ("30m", "60d"), "60分K": ("60m", "60d"), "日線": ("1d", "2y"), "週線": ("1wk", "2y")}
     interval, period = tf_map.get(tf, ("1d", "2y"))
@@ -113,8 +113,14 @@ def load_multi_tf_data(sid, tf):
 
 def get_poc_data(df_slice, bins):
     p_min, p_max = df_slice['Low'].min(), df_slice['High'].max()
+    if p_min == p_max:
+        p_min, p_max = p_min * 0.99, p_max * 1.01
+    if pd.isna(p_min) or pd.isna(p_max):
+        return 0, np.array([0, 1]), np.array([0])
     p_buckets = np.linspace(p_min, p_max, bins)
     v_hist, _ = np.histogram(df_slice['Close'], bins=p_buckets, weights=df_slice['Volume'])
+    if len(v_hist) == 0:
+        return 0, p_buckets, v_hist
     poc = (p_buckets[np.argmax(v_hist)] + p_buckets[np.argmax(v_hist)+1]) / 2
     return poc, p_buckets, v_hist
 
@@ -144,7 +150,7 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def get_top_gainers(strict_mode=False):
     basket = {
         "2330": "台積電", "2454": "聯發科", "2317": "鴻海", "2382": "廣達", 
@@ -263,7 +269,7 @@ for i, (s_name, s_id) in enumerate(quick_stocks):
 c_in1, c_in2, c_in4 = st.columns([1, 1.5, 1.5])
 with c_in1: stock_id = st.text_input("📍 代號", key="stock_id")
 with c_in2: chart_overlay = st.radio("主圖疊加", ["均線", "布林通道", "主力防線", "SAR"], horizontal=True)
-with c_in4: display_days = st.select_slider("觀察天數", options=[60, 120, 200, 300, 500], value=120)
+with c_in4: display_days = st.slider("觀察天數", min_value=20, max_value=600, value=120, step=1)
 
 cost_price = 0.0
 hold_vol = 1000
@@ -322,8 +328,11 @@ if raw_df is not None:
     df_d['MACDs_raw'] = df_d['MACDs_12_26_9']
     
     df_d.ta.bbands(length=20, std=2, append=True)
-    bbp_col = [c for c in df_d.columns if c.startswith('BBP_')][-1]
-    df_d['BBP_EMA20'] = df_d[bbp_col].ewm(span=20, adjust=False).mean().fillna(0.5)
+    bbp_cols = [c for c in df_d.columns if c.startswith('BBP_')]
+    if bbp_cols:
+        df_d['BBP_EMA20'] = df_d[bbp_cols[-1]].ewm(span=20, adjust=False).mean().fillna(0.5)
+    else:
+        df_d['BBP_EMA20'] = 0.5
     
     df_d['Turnover_Value'] = df_d['Close'] * df_d['Volume']
     df_d['Turnover_Change_Rate'] = (df_d['Turnover_Value'].pct_change() * 100).clip(-300, 300).fillna(0)
@@ -412,8 +421,10 @@ if raw_df is not None:
     else: combat_badge = f"<span style='background:#10B981; color:white; padding:4px 10px; border-radius:6px; font-weight:bold; margin-left: 10px;'>🧊 戰鬥力 {score:.1f} (弱勢)</span>"
     
     reversal_msg = ""
-    upper_bb = curr.get([c for c in df.columns if c.startswith('BBU_')][-1], 99999)
-    lower_bb = curr.get([c for c in df.columns if c.startswith('BBL_')][-1], 0)
+    bbu_cols = [c for c in df.columns if c.startswith('BBU_')]
+    upper_bb = curr.get(bbu_cols[-1], 99999) if bbu_cols else 99999
+    bbl_cols = [c for c in df.columns if c.startswith('BBL_')]
+    lower_bb = curr.get(bbl_cols[-1], 0) if bbl_cols else 0
     
     if curr['RSI_14'] > 80 and curr['BIAS_25'] > 10 and price_now >= upper_bb:
         reversal_msg = "<div style='background:#FEE2E2; border:2px solid #DC2626; color:#DC2626; padding:15px; border-radius:10px; font-weight:bold; font-size:18px; text-align:center; margin-bottom:15px; box-shadow: 0 4px 6px rgba(220, 38, 38, 0.2);'>🚨 🔴 紅色警戒：極端過熱 (超買區)！股價已達布林上軌且乖離過大，隨時有拉回風險，強烈建議居高思危！</div>"
@@ -473,12 +484,14 @@ if raw_df is not None:
             fig.add_trace(go.Scatter(x=df.index, y=df['SMA_42'], name="42MA", line=dict(color='#8B5CF6', width=2)), row=2, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['SMA_60'], name="60MA", line=dict(color='#EF4444', width=2)), row=2, col=1)
         elif chart_overlay == "布林通道":
-            bb_lower = [c for c in df.columns if c.startswith('BBL_')][-1]
-            bb_mid = [c for c in df.columns if c.startswith('BBM_')][-1]
-            bb_upper = [c for c in df.columns if c.startswith('BBU_')][-1]
-            fig.add_trace(go.Scatter(x=df.index, y=df[bb_upper], name="BB上軌", line=dict(color='#93C5FD', width=1.5, dash='dash')), row=2, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df[bb_mid], name="BB中軌", line=dict(color='#FCD34D', width=1.5)), row=2, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df[bb_lower], name="BB下軌", line=dict(color='#93C5FD', width=1.5, dash='dash')), row=2, col=1)
+            bbl_cols = [c for c in df.columns if c.startswith('BBL_')]
+            bbm_cols = [c for c in df.columns if c.startswith('BBM_')]
+            bbu_cols = [c for c in df.columns if c.startswith('BBU_')]
+            if bbl_cols and bbm_cols and bbu_cols:
+                bb_lower, bb_mid, bb_upper = bbl_cols[-1], bbm_cols[-1], bbu_cols[-1]
+                fig.add_trace(go.Scatter(x=df.index, y=df[bb_upper], name="BB上軌", line=dict(color='#93C5FD', width=1.5, dash='dash')), row=2, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df[bb_mid], name="BB中軌", line=dict(color='#FCD34D', width=1.5)), row=2, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df[bb_lower], name="BB下軌", line=dict(color='#93C5FD', width=1.5, dash='dash')), row=2, col=1)
         elif chart_overlay == "主力防線":
             fig.add_hline(y=res_val, line_dash="dot", line_color="#EF4444", line_width=1.5, annotation_text=f"壓力 {res_val:.2f}", row=2, col=1)
             fig.add_hline(y=sup_val, line_dash="dot", line_color="#10B981", line_width=1.5, annotation_text=f"支撐 {sup_val:.2f}", row=2, col=1)
@@ -560,9 +573,11 @@ if raw_df is not None:
         fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="大戶籌碼代理", fill='tozeroy', fillcolor='rgba(139, 92, 246, 0.2)', line=dict(color='#8B5CF6', width=2)), row=12, col=1)
         
         # 第 13 層：布林極限 %B (包含主線與均線以顯示黃金交叉)
-        bbp_col = [c for c in df.columns if c.startswith('BBP_') and c != 'BBP_EMA20'][-1]
-        fig.add_trace(go.Scatter(x=df.index, y=df[bbp_col], name="%B快線", line=dict(color='#ff0066', width=2)), row=13, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['BBP_EMA20'], name="%B慢線(均線)", line=dict(color='#ffd166', width=2)), row=13, col=1)
+        bbp_cols = [c for c in df.columns if c.startswith('BBP_') and c != 'BBP_EMA20']
+        if bbp_cols:
+            bbp_col = bbp_cols[-1]
+            fig.add_trace(go.Scatter(x=df.index, y=df[bbp_col], name="%B快線", line=dict(color='#ff0066', width=2)), row=13, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['BBP_EMA20'], name="%B慢線(均線)", line=dict(color='#ffd166', width=2)), row=13, col=1)
         
         # 第 14 層：RSI 動能
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], name="RSI", line=dict(color='#457b9d', width=2)), row=14, col=1)
