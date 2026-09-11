@@ -288,6 +288,8 @@ if raw_df is not None:
     df_d.ta.macd(append=True)
     df_d.ta.obv(append=True)
     df_d.ta.mfi(length=14, append=True)
+    df_d['OBV_SMA20'] = df_d['OBV'].rolling(window=20, min_periods=1).mean()
+    df_d['MFI_SMA20'] = df_d['MFI_14'].rolling(window=20, min_periods=1).mean()
     df_d['Net_Flow'] = (df_d['Close'].diff() * df_d['Volume'])
     
     # --- NF-QV 綜合風險指標計算 ---
@@ -581,6 +583,9 @@ if raw_df is not None:
         
         # 第 14 層：RSI 動能
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], name="RSI", line=dict(color='#457b9d', width=2)), row=14, col=1)
+        fig.add_hline(y=70, line_dash="dash", line_color="#EF4444", line_width=1.5, row=14, col=1)
+        fig.add_hline(y=50, line_dash="dot", line_color="#94A3B8", line_width=1, row=14, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color="#22C55E", line_width=1.5, row=14, col=1)
         
         # 第 15 層：25日乖離線
         fig.add_trace(go.Scatter(x=df.index, y=df['BIAS_25'], name="25日乖離線", line=dict(color='#E11D48', width=2)), row=15, col=1)
@@ -594,10 +599,19 @@ if raw_df is not None:
         fig.add_hline(y=lower_bound, line_dash="solid", line_color="#22C55E", line_width=1.5, row=15, col=1)
         
         # 第 16 層：MFI 熱錢流
-        fig.add_trace(go.Scatter(x=df.index, y=df['MFI_14'], name="MFI", fill='tozeroy', fillcolor='rgba(23, 190, 207, 0.2)', line=dict(color='#17becf', width=2)), row=16, col=1)
+        colors_mfi = ['rgba(23, 190, 207, 0.4)' if val >= 50 else 'rgba(23, 190, 207, 0.1)' for val in df['MFI_14']]
+        fig.add_trace(go.Bar(x=df.index, y=df['MFI_14'], name="MFI柱", marker_color=colors_mfi), row=16, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['MFI_14'], name="MFI", line=dict(color='#17becf', width=2)), row=16, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['MFI_SMA20'], name="MFI均線", line=dict(color='#F59E0B', width=1.5, dash='dash')), row=16, col=1)
+        fig.add_hline(y=80, line_dash="dash", line_color="#EF4444", line_width=1.5, row=16, col=1)
+        fig.add_hline(y=50, line_dash="dot", line_color="#94A3B8", line_width=1, row=16, col=1)
+        fig.add_hline(y=20, line_dash="dash", line_color="#22C55E", line_width=1.5, row=16, col=1)
         
         # 第 17 層：OBV 累積能量
-        fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="OBV", line=dict(color='#7f7f7f', width=2)), row=17, col=1)
+        colors_obv = ['rgba(127, 127, 127, 0.4)' if o > s else 'rgba(127, 127, 127, 0.1)' for o, s in zip(df['OBV'], df['OBV_SMA20'])]
+        fig.add_trace(go.Bar(x=df.index, y=df['OBV'], name="OBV柱", marker_color=colors_obv), row=17, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="OBV快線", line=dict(color='#7f7f7f', width=2)), row=17, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['OBV_SMA20'], name="OBV慢線", line=dict(color='#F59E0B', width=1.5, dash='dash')), row=17, col=1)
 
         # 已移除 Y 軸標題，將 margin-l (左邊距) 縮減以增加圖表寬度
         fig.update_layout(height=3600, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, xaxis2_rangeslider_visible=False,
