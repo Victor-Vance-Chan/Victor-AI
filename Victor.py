@@ -9,7 +9,7 @@ from streamlit_autorefresh import st_autorefresh
 
 # --- 1. 頁面基礎設定 ---
 st.set_page_config(layout="wide", page_title="詹VICTOR帥 | AI 深度交互實戰看板")
-st_autorefresh(interval=60 * 1000, key="data_refresh")
+st_autorefresh(interval=600 * 1000, key="data_refresh") # 暫時調長到 10 分鐘，避免 Yahoo API 卡住時造成無限迴圈
 
 if 'stock_id' not in st.session_state:
     st.session_state['stock_id'] = "2330"
@@ -128,17 +128,17 @@ def get_poc_data(df_slice, bins):
 header_bg = "linear-gradient(135deg, #020617 0%, #1e3a8a 100%)"
 st.markdown(f"""
 <div style="background: {header_bg}; padding: 30px 15px; border-radius: 20px; box-shadow: 0 15px 35px rgba(59, 130, 246, 0.4), inset 0 2px 5px rgba(255,255,255,0.2); margin-bottom: 25px; margin-top: 10px; text-align: center; border: 2px solid rgba(147, 197, 253, 0.2); position: relative; overflow: hidden;">
-    <div style="position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0) 60%); transform: rotate(30deg); pointer-events: none; animation: pulse 4s infinite alternate;"></div>
-    <div class="main-header" style="position: relative; z-index: 10; margin: 0; font-size: 34px; font-weight: 900; letter-spacing: 2px; display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;">
-        <span style="font-size: 40px;">🚀</span> 
-        <span class="title-white" style="text-shadow: none;">詹VICTOR帥</span> 
-        <span class="ai-badge" style="font-size: 18px; font-weight: 900; background: rgba(59,130,246,0.6); padding: 6px 14px; border-radius: 30px; border: 1px solid rgba(255,255,255,0.4); box-shadow: 0 0 10px rgba(0,0,0,0.5);">AI 戰情室</span>
-    </div>
-    <div style="background: rgba(15,23,42,0.6); border-top: 1px solid rgba(255,255,255,0.1); padding: 8px 10px; margin-top: 12px; overflow: hidden; white-space: nowrap; font-size: 15px; font-weight: bold; border-radius: 6px;">
-        <marquee scrollamount="3" scrolldelay="30" truespeed>
-            {get_global_market_data()}
-        </marquee>
-    </div>
+<div style="position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0) 60%); transform: rotate(30deg); pointer-events: none; animation: pulse 4s infinite alternate;"></div>
+<div class="main-header" style="position: relative; z-index: 10; margin: 0; font-size: 34px; font-weight: 900; letter-spacing: 2px; display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;">
+<span style="font-size: 40px;">🚀</span> 
+<span class="title-white" style="text-shadow: none;">詹VICTOR帥</span> 
+<span class="ai-badge" style="font-size: 18px; font-weight: 900; background: rgba(59,130,246,0.6); padding: 6px 14px; border-radius: 30px; border: 1px solid rgba(255,255,255,0.4); box-shadow: 0 0 10px rgba(0,0,0,0.5);">AI 戰情室</span>
+</div>
+<div style="background: rgba(15,23,42,0.6); border-top: 1px solid rgba(255,255,255,0.1); padding: 8px 10px; margin-top: 12px; overflow: hidden; white-space: nowrap; font-size: 15px; font-weight: bold; border-radius: 6px;">
+<marquee scrollamount="3" scrolldelay="30" truespeed>
+{get_global_market_data()}
+</marquee>
+</div>
 </div>
 <style>
     .title-white {{ color: #FFFFFF !important; }}
@@ -152,6 +152,7 @@ st.markdown(f"""
 
 @st.cache_data(ttl=300)
 def get_top_gainers(strict_mode=False):
+    # 優化：直接指定正確的上市櫃後綴，避免 yfinance 重試 404 造成大卡頓
     basket = {
         "2330": "台積電", "2454": "聯發科", "2317": "鴻海", "2382": "廣達", 
         "2603": "長榮", "3231": "緯創", "2609": "陽明", "2376": "技嘉", 
@@ -177,7 +178,8 @@ def get_top_gainers(strict_mode=False):
         "8028": "昇陽半", "3529": "力旺", "3665": "貿聯", "6669": "緯穎", "6643": "M31",
         "3515": "華擎", "6138": "茂達", "5269": "祥碩", "3013": "晟銘電", "6213": "聯茂"
     }
-    tickers = " ".join([f"{sid}.TW" for sid in basket.keys()] + [f"{sid}.TWO" for sid in basket.keys()])
+    # 優化：只搜尋上市後綴，大幅減輕 Yahoo Finance 負擔，避免 404 造成的無限迴圈當機
+    tickers = " ".join([f"{sid}.TW" for sid in basket.keys()])
     try:
         period = "60d" if strict_mode else "5d"
         df = yf.download(tickers, period=period, interval="1d", progress=False)
@@ -315,6 +317,10 @@ if raw_df is not None:
     df_d['VPE_Base'] = (df_d['Close'] - df_d['Open']) / (df_d['High'] - df_d['Low'] + 1e-5)
     df_d['Chip_Concentration'] = (df_d['VPE_Base'] * df_d['Volume']).rolling(10).sum() / (df_d['Volume'].rolling(10).sum() + 1e-5) * 100
 
+    # --- 籌碼時間框架分數 (Time-Frame Score) ---
+    df_d['Cum_Net_Flow'] = (df_d['VPE_Base'] * df_d['Volume']).cumsum()
+    df_d['Chip_Score_240'] = ((df_d['Cum_Net_Flow'].rolling(240).corr(df_d['Close']).fillna(0) + 1) / 2) * 100
+
     
     # 強度比(T) (T_Score) 與 RVOL
     flow_60_mean = df_d['Net_Flow'].abs().rolling(window=60, min_periods=1).mean()
@@ -438,6 +444,12 @@ if raw_df is not None:
     if rvol_val > 3.0 and change_pct > 2.0:
         reversal_msg += f"<div style='background:#FEF3C7; border:2px solid #F59E0B; color:#B45309; padding:12px; border-radius:10px; font-weight:bold; font-size:16px; text-align:center; margin-bottom:15px; box-shadow: 0 4px 6px rgba(245, 158, 11, 0.2); animation: pulse 1s infinite alternate;'>⚠️ 爆量異動雷達：當前成交量高達均量的 {rvol_val:.1f} 倍，疑似主力大單突擊！</div>"
         
+    chip_s240_top = curr.get('Chip_Score_240', 0)
+    score_color = "#DC2626" if chip_s240_top > 80 else "#F59E0B" if chip_s240_top > 60 else "#64748B"
+    bg_color = "#FEF2F2" if score_color == "#DC2626" else "#FFFBEB" if score_color == "#F59E0B" else "#F8FAFC"
+    border_col = "#FCA5A5" if score_color == "#DC2626" else "#FDE68A" if score_color == "#F59E0B" else "#CBD5E1"
+    chip_score_badge = f"<span style='color: {score_color}; font-size: 16px; font-weight: bold; background: {bg_color}; padding: 4px 12px; border-radius: 6px; border: 1px solid {border_col}; margin-left: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);'>⏱️ 籌碼動能: {chip_s240_top:.0f} 分</span>"
+        
     st.markdown(reversal_msg, unsafe_allow_html=True)
     st.markdown(f"""<div style="display: flex; justify-content: space-between; align-items: center; background: #F8FAFC; padding: 12px 20px; border-radius: 8px; border: 1px solid #E2E8F0; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
 <div style="font-size: 16px; display: flex; align-items: baseline; flex-wrap: wrap;">
@@ -452,7 +464,7 @@ if raw_df is not None:
 <span style="color: #16A34A; font-weight: bold; margin-right: 20px;">{curr['Low']:.2f}</span>
 <span style="color: #64748B; margin-right: 5px;">振幅</span>
 <span style="color: #F59E0B; font-weight: bold; margin-right: 10px;">{amp_pct:.2f}%</span>
-<span style="color: #475569; font-size: 24px; font-weight: 900; background: #F8FAFC; padding: 3px 15px; border-radius: 6px; border: 1px solid #CBD5E1; margin-left: 20px; letter-spacing: 1px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">{display_title}</span>
+<span style="color: #475569; font-size: 24px; font-weight: 900; background: #F8FAFC; padding: 3px 15px; border-radius: 6px; border: 1px solid #CBD5E1; margin-left: 20px; letter-spacing: 1px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">{display_title}</span>{chip_score_badge}
 </div>
 <div style="font-size: 16px; background: #FFFFFF; padding: 6px 15px; border-radius: 6px; border: 1px solid #CBD5E1; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center;">
 <span style="color: #475569; margin-right: 8px; font-weight: bold;">📊 最新大單動向:</span> <span style="margin-right: 10px;">{big_order_status}</span> {combat_badge}
@@ -655,6 +667,15 @@ if raw_df is not None:
             st.markdown('<p class="diag-section-title">🕵️ 詹帥籌碼核心觀察</p>', unsafe_allow_html=True)
             st.markdown(f"<div class='indicator-box'><b>📍 籌碼重心 (POC) 解析</b><br>密集區在 {poc_price:.2f}。目前為{'「多頭優勢」' if price_now > poc_price else '「空頭反彈」'}。</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='indicator-box'><b>🔥 動能指標 (MFI)</b><br>數值 {curr['MFI_14']:.1f}。{'資金流入，籌碼穩定。' if curr['MFI_14'] > 50 else '資金流出，嚴防無量。'}</div>", unsafe_allow_html=True)
+            
+            # --- 籌碼時間框架分數 UI ---
+            chip_s240 = curr.get('Chip_Score_240', 0)
+            prev_s240 = df.iloc[-2].get('Chip_Score_240', 0) if len(df) > 1 else 0
+            diff_240 = chip_s240 - prev_s240
+            icon_240 = "📈" if diff_240 > 0 else "📉" if diff_240 < 0 else "➖"
+            
+            status_text = "長線籌碼推動力極強！" if chip_s240 > 80 else "籌碼動能穩定。" if chip_s240 > 60 else "目前相關性普通，需搭配技術面。"
+            st.markdown(f"<div class='indicator-box'><b>⏱️ 歷史籌碼動能 (240T)</b><br>當前分數：{chip_s240:.1f} (昨日 {prev_s240:.1f} {icon_240})<br><br><span style='color:#DC2626; font-weight:bold;'>{status_text}</span></div>", unsafe_allow_html=True)
 
     with tab3:
         # (此分頁內容與 21 項指標邏輯完整保留)
