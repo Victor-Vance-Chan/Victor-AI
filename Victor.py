@@ -94,7 +94,7 @@ def load_stock_data_safe(sid):
 
 @st.cache_data(ttl=300)
 def load_multi_tf_data(sid, tf):
-    tf_map = {"15分K": ("15m", "60d"), "30分K": ("30m", "60d"), "60分K": ("60m", "60d"), "日線": ("1d", "2y"), "週線": ("1wk", "2y")}
+    tf_map = {"15分K": ("15m", "60d"), "30分K": ("30m", "60d"), "60分K": ("60m", "60d"), "日線": ("1d", "2y"), "週線": ("1wk", "5y"), "月線": ("1mo", "15y")}
     interval, period = tf_map.get(tf, ("1d", "2y"))
     for suffix in [".TW", ".TWO"]:
         try:
@@ -442,13 +442,13 @@ if raw_df is not None:
     # 爆量雷達
     rvol_val = curr.get('RVOL', 1)
     if rvol_val > 3.0 and change_pct > 2.0:
-        reversal_msg += f"<div style='background:#FEF3C7; border:2px solid #F59E0B; color:#B45309; padding:12px; border-radius:10px; font-weight:bold; font-size:16px; text-align:center; margin-bottom:15px; box-shadow: 0 4px 6px rgba(245, 158, 11, 0.2); animation: pulse 1s infinite alternate;'>⚠️ 爆量異動雷達：當前成交量高達均量的 {rvol_val:.1f} 倍，疑似主力大單突擊！</div>"
+        reversal_msg += f"<div style='background:#FEF3C7; border:2px solid #F59E0B; color:#B45309; padding:12px; border-radius:10px; font-weight:bold; font-style:normal; font-size:16px; text-align:center; margin-bottom:15px; box-shadow: 0 4px 6px rgba(245, 158, 11, 0.2);'>⚠️ 爆量異動雷達：當前成交量高達均量的 {rvol_val:.1f} 倍，疑似主力大單突擊！</div>"
         
     chip_s240_top = curr.get('Chip_Score_240', 0)
     score_color = "#DC2626" if chip_s240_top > 80 else "#F59E0B" if chip_s240_top > 60 else "#64748B"
     bg_color = "#FEF2F2" if score_color == "#DC2626" else "#FFFBEB" if score_color == "#F59E0B" else "#F8FAFC"
     border_col = "#FCA5A5" if score_color == "#DC2626" else "#FDE68A" if score_color == "#F59E0B" else "#CBD5E1"
-    chip_score_badge = f"<span style='color: {score_color}; font-size: 16px; font-weight: bold; background: {bg_color}; padding: 4px 12px; border-radius: 6px; border: 1px solid {border_col}; margin-left: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);'>⏱️ 籌碼動能: {chip_s240_top:.0f} 分</span>"
+    chip_score_badge = f"<span style='color: {score_color}; font-size: 16px; font-weight: bold; background: {bg_color}; padding: 4px 12px; border-radius: 6px; border: 1px solid {border_col}; margin-left: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);'>⏱️ 籌碼連動: {chip_s240_top:.0f} 分</span>"
         
     st.markdown(reversal_msg, unsafe_allow_html=True)
     st.markdown(f"""<div style="display: flex; justify-content: space-between; align-items: center; background: #F8FAFC; padding: 12px 20px; border-radius: 8px; border: 1px solid #E2E8F0; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
@@ -674,8 +674,8 @@ if raw_df is not None:
             diff_240 = chip_s240 - prev_s240
             icon_240 = "📈" if diff_240 > 0 else "📉" if diff_240 < 0 else "➖"
             
-            status_text = "長線籌碼推動力極強！" if chip_s240 > 80 else "籌碼動能穩定。" if chip_s240 > 60 else "目前相關性普通，需搭配技術面。"
-            st.markdown(f"<div class='indicator-box'><b>⏱️ 歷史籌碼動能 (240T)</b><br>當前分數：{chip_s240:.1f} (昨日 {prev_s240:.1f} {icon_240})<br><br><span style='color:#DC2626; font-weight:bold;'>{status_text}</span></div>", unsafe_allow_html=True)
+            status_text = "長線籌碼推動力極強！" if chip_s240 > 80 else "籌碼連動穩定。" if chip_s240 > 60 else "目前相關性普通，需搭配技術面。"
+            st.markdown(f"<div class='indicator-box'><b>⏱️ 歷史籌碼連動 (240T)</b><br>當前分數：{chip_s240:.1f} (昨日 {prev_s240:.1f} {icon_240})<br><br><span style='color:#DC2626; font-weight:bold;'>{status_text}</span></div>", unsafe_allow_html=True)
 
     with tab3:
         # (此分頁內容與 21 項指標邏輯完整保留)
@@ -798,14 +798,26 @@ if raw_df is not None:
 
     with tab5:
         st.markdown('<p class="diag-section-title">📈 多時區 K 線分析</p>', unsafe_allow_html=True)
-        tf_choice = st.radio("選擇時區", ["15分K", "30分K", "60分K", "日線", "週線"], horizontal=True, index=2)
+        tf_choice = st.radio("選擇時區", ["月線", "週線", "日線", "60分K", "30分K", "15分K"], horizontal=True, index=2)
         
         tf_df = load_multi_tf_data(stock_id, tf_choice)
         if tf_df is not None and not tf_df.empty:
-            if tf_choice == "週線":
+            if tf_choice == "月線":
+                tf_df.ta.sma(length=5, append=True)
+                tf_df.ta.sma(length=10, append=True)
+                tf_df.ta.sma(length=20, append=True)
+                tf_df.ta.macd(fast=21, slow=42, signal=9, append=True)
+            elif tf_choice == "週線":
                 tf_df.ta.sma(length=10, append=True)
                 tf_df.ta.sma(length=20, append=True)
                 tf_df.ta.sma(length=60, append=True)
+                tf_df.ta.macd(fast=12, slow=26, signal=9, append=True)
+            elif tf_choice == "日線":
+                tf_df.ta.sma(length=5, append=True)
+                tf_df.ta.sma(length=10, append=True)
+                tf_df.ta.sma(length=42, append=True)
+                tf_df.ta.sma(length=60, append=True)
+                tf_df.ta.macd(fast=6, slow=10, signal=6, append=True)
             else:
                 tf_df.ta.sma(length=5, append=True)
                 tf_df.ta.sma(length=10, append=True)
@@ -816,7 +828,11 @@ if raw_df is not None:
 
             tf_df = tf_df.tail(display_days).copy()
 
-            fig_tf = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
+            has_macd = tf_choice in ["日線", "週線", "月線"]
+            if has_macd:
+                fig_tf = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.6, 0.2, 0.2])
+            else:
+                fig_tf = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
             
             # 強制將 index 轉為字串
             if '分' in tf_choice:
@@ -826,7 +842,11 @@ if raw_df is not None:
                 
             fig_tf.add_trace(go.Candlestick(x=tf_df.index, open=tf_df['Open'], high=tf_df['High'], low=tf_df['Low'], close=tf_df['Close'], name="K線", increasing_line_color='red', decreasing_line_color='black'), row=1, col=1)
             
-            if tf_choice == "週線":
+            if tf_choice == "月線":
+                if 'SMA_5' in tf_df.columns: fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_5'], name="5MA", line=dict(color='#EAB308', width=1.5)), row=1, col=1)
+                if 'SMA_10' in tf_df.columns: fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_10'], name="10MA", line=dict(color='#3B82F6', width=1.5)), row=1, col=1)
+                if 'SMA_20' in tf_df.columns: fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_20'], name="20MA", line=dict(color='#EF4444', width=2)), row=1, col=1)
+            elif tf_choice == "週線":
                 if 'SMA_10' in tf_df.columns: fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_10'], name="10MA", line=dict(color='#EAB308', width=1.5)), row=1, col=1)
                 if 'SMA_20' in tf_df.columns: fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_20'], name="20MA", line=dict(color='#3B82F6', width=1.5)), row=1, col=1)
                 if 'SMA_60' in tf_df.columns: fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_60'], name="60MA", line=dict(color='#EF4444', width=2)), row=1, col=1)
@@ -841,7 +861,19 @@ if raw_df is not None:
             colors_vol = ['#EF4444' if row['Close'] >= row['Open'] else '#10B981' for i, row in tf_df.iterrows()]
             fig_tf.add_trace(go.Bar(x=tf_df.index, y=tf_df['Volume'], name="成交量", marker_color=colors_vol), row=2, col=1)
             
-            fig_tf.update_layout(height=600, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, xaxis_type='category', dragmode=False, margin=dict(l=50, r=10, t=10, b=10))
+            if has_macd:
+                macd_h = 'MACDh_6_10_6' if tf_choice == "日線" else 'MACDh_12_26_9' if tf_choice == "週線" else 'MACDh_21_42_9'
+                macd_f = 'MACD_6_10_6' if tf_choice == "日線" else 'MACD_12_26_9' if tf_choice == "週線" else 'MACD_21_42_9'
+                macd_s = 'MACDs_6_10_6' if tf_choice == "日線" else 'MACDs_12_26_9' if tf_choice == "週線" else 'MACDs_21_42_9'
+                if macd_h in tf_df.columns:
+                    colors_macd = ['#e63946' if val >= 0 else '#2a9d8f' for val in tf_df[macd_h]]
+                    fig_tf.add_trace(go.Bar(x=tf_df.index, y=tf_df[macd_h], name="MACD柱", marker_color=colors_macd), row=3, col=1)
+                    fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df[macd_f], name="MACD快線", line=dict(color='#3B82F6', width=1)), row=3, col=1)
+                    fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df[macd_s], name="MACD慢線", line=dict(color='#F59E0B', width=1)), row=3, col=1)
+                    fig_tf.update_yaxes(title_text="MACD", row=3, col=1)
+
+            h = 800 if has_macd else 600
+            fig_tf.update_layout(height=h, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, xaxis_type='category', dragmode=False, margin=dict(l=50, r=10, t=10, b=10))
             fig_tf.update_xaxes(fixedrange=True)
             fig_tf.update_yaxes(fixedrange=True)
             fig_tf.update_yaxes(title_text="價格", row=1, col=1)
