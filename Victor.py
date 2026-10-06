@@ -833,13 +833,24 @@ if raw_df is not None:
             tf_df = tf_df.tail(display_days).copy()
 
             has_macd = tf_choice in ["日線", "週線", "月線"]
-            if has_macd:
-                fig_tf = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.55, 0.15, 0.15, 0.15])
-            else:
-                fig_tf = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_heights=[0.6, 0.2, 0.2])
+            has_vol_chip = tf_choice in ["日線", "週線", "月線"]
             
-            # 強制將 index 轉為字串
+            if has_macd and has_vol_chip:
+                fig_tf = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.55, 0.15, 0.15, 0.15])
+            elif has_vol_chip:
+                fig_tf = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_heights=[0.6, 0.2, 0.2])
+            else:
+                fig_tf = make_subplots(rows=1, cols=1)
+            
+            # 強制將 index 轉為字串並計算跨日分隔線
+            new_day_ticks = []
             if '分' in tf_choice:
+                prev_date = None
+                for dt in tf_df.index:
+                    cur_date = pd.to_datetime(dt).date()
+                    if prev_date is not None and cur_date != prev_date:
+                        new_day_ticks.append(pd.to_datetime(dt).strftime('%Y-%m-%d %H:%M'))
+                    prev_date = cur_date
                 tf_df.index = tf_df.index.strftime('%Y-%m-%d %H:%M')
             else:
                 tf_df.index = tf_df.index.strftime('%Y-%m-%d')
@@ -862,13 +873,14 @@ if raw_df is not None:
                 if tf_choice == "60分K" and 'SMA_240' in tf_df.columns:
                     fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['SMA_240'], name="240MA", line=dict(color='#14B8A6', width=2)), row=1, col=1)
 
-            colors_vol = ['#EF4444' if row['Close'] >= row['Open'] else '#10B981' for i, row in tf_df.iterrows()]
-            fig_tf.add_trace(go.Bar(x=tf_df.index, y=tf_df['Volume'], name="成交量", marker_color=colors_vol), row=2, col=1)
-            
-            colors_chip = ['#1f77b4' if x >= 0 else '#d62728' for x in tf_df['Chip_Concentration']]
-            fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['Chip_Concentration'], name="集中度", fill='tozeroy', line=dict(color='rgba(255,255,255,0)')), row=3, col=1)
-            fig_tf.add_trace(go.Bar(x=tf_df.index, y=tf_df['Chip_Concentration'], name="集中度柱狀", marker_color=colors_chip), row=3, col=1)
-            fig_tf.add_hline(y=0, line_dash="solid", line_color="black", line_width=1, row=3, col=1)
+            if has_vol_chip:
+                colors_vol = ['#EF4444' if row['Close'] >= row['Open'] else '#10B981' for i, row in tf_df.iterrows()]
+                fig_tf.add_trace(go.Bar(x=tf_df.index, y=tf_df['Volume'], name="成交量", marker_color=colors_vol), row=2, col=1)
+                
+                colors_chip = ['#1f77b4' if x >= 0 else '#d62728' for x in tf_df['Chip_Concentration']]
+                fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['Chip_Concentration'], name="集中度", fill='tozeroy', line=dict(color='rgba(255,255,255,0)')), row=3, col=1)
+                fig_tf.add_trace(go.Bar(x=tf_df.index, y=tf_df['Chip_Concentration'], name="集中度柱狀", marker_color=colors_chip), row=3, col=1)
+                fig_tf.add_hline(y=0, line_dash="solid", line_color="black", line_width=1, row=3, col=1)
             
             if has_macd:
                 macd_h = 'MACDh_6_10_6' if tf_choice == "日線" else 'MACDh_12_26_9' if tf_choice == "週線" else 'MACDh_21_42_9'
@@ -879,15 +891,18 @@ if raw_df is not None:
                     fig_tf.add_trace(go.Bar(x=tf_df.index, y=tf_df[macd_h], name="MACD柱", marker_color=colors_macd), row=4, col=1)
                     fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df[macd_f], name="MACD快線", line=dict(color='#3B82F6', width=1)), row=4, col=1)
                     fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df[macd_s], name="MACD慢線", line=dict(color='#F59E0B', width=1)), row=4, col=1)
-                    fig_tf.update_yaxes(title_text="MACD", row=4, col=1)
 
-            h = 1000 if has_macd else 800
-            fig_tf.update_layout(height=h, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, xaxis_type='category', dragmode=False, margin=dict(l=50, r=10, t=10, b=10))
-            fig_tf.update_xaxes(fixedrange=True)
-            fig_tf.update_yaxes(fixedrange=True)
-            fig_tf.update_yaxes(title_text="價格", row=1, col=1)
-            fig_tf.update_yaxes(title_text="成交量", row=2, col=1)
-            fig_tf.update_yaxes(title_text="籌碼集中度", row=3, col=1)
+            h = 1000 if (has_macd and has_vol_chip) else (800 if has_vol_chip else 600)
+            fig_tf.update_layout(height=h, template="plotly_white", hovermode='x unified', showlegend=False, xaxis_rangeslider_visible=False, xaxis_type='category', dragmode=False, margin=dict(l=10, r=10, t=10, b=10))
+            
+            if '分' in tf_choice:
+                fig_tf.update_xaxes(fixedrange=True, showticklabels=False)
+                for tick in new_day_ticks:
+                    fig_tf.add_vline(x=tick, line_width=1.5, line_dash="dash", line_color="rgba(150, 150, 150, 0.6)")
+            else:
+                fig_tf.update_xaxes(fixedrange=True)
+                
+            fig_tf.update_yaxes(fixedrange=True, title_text=None, ticklabelposition="inside")
             
             st.plotly_chart(fig_tf, use_container_width=True, config=lock_config)
         else:
