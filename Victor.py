@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
@@ -123,6 +123,39 @@ def get_poc_data(df_slice, bins):
         return 0, p_buckets, v_hist
     poc = (p_buckets[np.argmax(v_hist)] + p_buckets[np.argmax(v_hist)+1]) / 2
     return poc, p_buckets, v_hist
+
+def calculate_macd_countdown(df, fast, slow, signal):
+    if df is None or len(df) < slow + signal:
+        return None
+    try:
+        df_ta = df.copy()
+        df_ta.ta.macd(fast=fast, slow=slow, signal=signal, append=True)
+        macd_h_col = f"MACDh_{fast}_{slow}_{signal}"
+        if macd_h_col not in df_ta.columns:
+            return None
+        hist = df_ta[macd_h_col].dropna().values
+        if len(hist) < 3:
+            return None
+            
+        current_hist = hist[-1]
+        if current_hist > 0:
+            count = 0
+            for val in reversed(hist):
+                if val > 0:
+                    count += 1
+                else:
+                    break
+            return f"+{count}"
+        else:
+            prev_hist = hist[-2]
+            slope = current_hist - prev_hist
+            if slope > 0:
+                bars = abs(current_hist) / slope
+                return f"-{max(1, int(round(bars)))}"
+            else:
+                return "未收斂"
+    except:
+        return None
 
 # --- 3. 頂部視覺與極致震撼標題 ---
 header_bg = "linear-gradient(135deg, #020617 0%, #1e3a8a 100%)"
@@ -278,6 +311,16 @@ hold_vol = 1000
 
 raw_df, actual_ticker = load_stock_data_safe(stock_id)
 idx_df = load_index_data()
+
+macd_weekly_countdown = "無資料"
+macd_monthly_countdown = "無資料"
+if stock_id:
+    df_week = load_multi_tf_data(stock_id, "週線")
+    df_month = load_multi_tf_data(stock_id, "月線")
+    w_res = calculate_macd_countdown(df_week, 12, 26, 9)
+    m_res = calculate_macd_countdown(df_month, 21, 42, 9)
+    if w_res: macd_weekly_countdown = w_res
+    if m_res: macd_monthly_countdown = m_res
 
 if raw_df is not None:
     df_d = raw_df.copy()
@@ -470,6 +513,22 @@ if raw_df is not None:
 <span style="color: #475569; margin-right: 8px; font-weight: bold;">📊 最新大單動向:</span> <span style="margin-right: 10px;">{big_order_status}</span> {combat_badge}
 </div>
 </div>""", unsafe_allow_html=True)
+
+    w_color = '#DC2626' if '+' in str(macd_weekly_countdown) else '#16A34A' if '-' in str(macd_weekly_countdown) else '#475569'
+    m_color = '#DC2626' if '+' in str(macd_monthly_countdown) else '#16A34A' if '-' in str(macd_monthly_countdown) else '#475569'
+    
+    st.markdown(f"""
+    <div style="display: flex; justify-content: flex-end; gap: 10px; margin-bottom: -45px; position: relative; z-index: 99; padding-right: 15px; pointer-events: none;">
+        <div style="background: #EFF6FF; border: 1px solid #93C5FD; padding: 4px 12px; border-radius: 6px; font-size: 13px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); pointer-events: auto; display: flex; align-items: center; gap: 6px;">
+            <span style="color: #1E3A8A; font-weight: bold;">波段(週)</span>
+            <span style="font-weight: 900; color: {w_color}; font-size: 15px;">{macd_weekly_countdown}</span>
+        </div>
+        <div style="background: #F5F3FF; border: 1px solid #C4B5FD; padding: 4px 12px; border-radius: 6px; font-size: 13px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); pointer-events: auto; display: flex; align-items: center; gap: 6px;">
+            <span style="color: #4C1D95; font-weight: bold;">大行情(月)</span>
+            <span style="font-weight: 900; color: {m_color}; font-size: 15px;">{macd_monthly_countdown}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     tab1, tab5, tab2, tab3, tab4 = st.tabs(["📊 技術看板", "📈 多時區K線", "💎 籌碼深度分佈", "🎯 深度實戰建議", "⚖️ 資金戰略與加減碼"])
 
