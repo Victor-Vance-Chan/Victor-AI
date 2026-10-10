@@ -468,12 +468,15 @@ c_in1, c_in2, c_in4 = st.columns([1, 1.5, 1.5])
 with c_in1: stock_id = st.text_input("📍 代號", key="stock_id")
 with c_in2: chart_overlay = st.radio("主圖疊加", ["均線", "布林通道", "VWAP均價防線", "SAR"], horizontal=True)
 with c_in4: display_days = st.slider("觀察天數", min_value=20, max_value=600, value=120, step=1)
-
-position_col1, position_col2 = st.columns([1, 1])
-with position_col1:
-    cost_price = st.number_input("持倉成本價 (選填)", min_value=0.0, value=0.0, step=0.5, format="%.2f", key="strategy_cost")
-with position_col2:
-    hold_lots = st.number_input("持倉張數", min_value=0, value=1, step=1, key="strategy_lots")
+position_key = re.sub(r"[^A-Z0-9]+", "_", str(stock_id).strip().upper()) or "DEFAULT"
+position_cost_key = f"strategy_cost_{position_key}"
+position_lots_key = f"strategy_lots_{position_key}"
+if position_cost_key not in st.session_state:
+    st.session_state[position_cost_key] = 0.0
+if position_lots_key not in st.session_state:
+    st.session_state[position_lots_key] = 1
+cost_price = float(st.session_state[position_cost_key])
+hold_lots = int(st.session_state[position_lots_key])
 hold_vol = hold_lots * 1000
 
 raw_df, actual_ticker = load_stock_data_safe(stock_id)
@@ -853,11 +856,20 @@ if raw_df is not None:
         col_calc1, col_calc2 = st.columns([0.4, 0.6])
         with col_calc1:
             st.subheader("🛠️ 戰略參數輸入")
-            cur_avg_p = st.number_input("現有成本價", min_value=0.0, value=float(cost_price or price_now), format="%.2f", key="sim_cost")
-            cur_qty = st.number_input("現有張數", min_value=0, value=int(hold_vol/1000), step=1, key="sim_qty")
+            st.markdown("**📌 持倉資料（其他分頁共用）**")
+            position_col1, position_col2 = st.columns([1, 1])
+            with position_col1:
+                cost_price = st.number_input("持倉成本價 (選填)", min_value=0.0, step=0.5, format="%.2f", key=position_cost_key)
+            with position_col2:
+                hold_lots = st.number_input("持倉張數", min_value=0, step=1, key=position_lots_key)
+            hold_vol = hold_lots * 1000
+            cur_avg_p = float(cost_price if cost_price > 0 else price_now)
+            cur_qty = int(hold_lots)
+            if cost_price <= 0:
+                st.caption(f"未填持倉成本時，模擬器暫以目前股價 {price_now:.2f} 作為試算基準；主頁不會因此顯示持倉損益。")
             st.write("---")
-            change_shares = st.number_input("變動張數 (買進為正、賣出為負)", min_value=-int(cur_qty), value=1, step=1, key="sim_change_q")
-            change_price = st.number_input("變動執行價格", min_value=0.0, value=float(price_now), format="%.2f", key="sim_change_p")
+            change_shares = st.number_input("變動張數 (買進為正、賣出為負)", min_value=-int(cur_qty), value=1, step=1, key=f"sim_change_q_{position_key}")
+            change_price = st.number_input("變動執行價格", min_value=0.0, value=float(price_now), format="%.2f", key=f"sim_change_p_{position_key}")
             
             st.write("---")
             st.markdown("🎯 **風險報酬設定**")
@@ -872,8 +884,8 @@ if raw_df is not None:
                 suggest_stop = price_now * 0.95
                 suggest_take = price_now * 1.10
                 
-            stop_loss = st.number_input("停損價設定", value=float(suggest_stop), format="%.2f")
-            take_profit = st.number_input("停利價設定", value=float(suggest_take), format="%.2f")
+            stop_loss = st.number_input("停損價設定", value=float(suggest_stop), format="%.2f", key=f"sim_stop_loss_{position_key}")
+            take_profit = st.number_input("停利價設定", value=float(suggest_take), format="%.2f", key=f"sim_take_profit_{position_key}")
             
             # 保留：變動總價自動顯示
             change_total_amt = abs(change_shares) * change_price * 1000
