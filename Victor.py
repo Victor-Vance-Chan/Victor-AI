@@ -1,11 +1,13 @@
 ﻿import streamlit as st
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
+import pandas_ta as ta  # Registers the DataFrame.ta accessor used below.
 import plotly.graph_objects as go  
 from plotly.subplots import make_subplots
 import numpy as np
+import re
 from streamlit_autorefresh import st_autorefresh  
+from html import escape
 
 # --- 1. 頁面基礎設定 ---
 st.set_page_config(layout="wide", page_title="詹VICTOR帥 | AI 深度交互實戰看板")
@@ -17,11 +19,25 @@ if 'stock_id' not in st.session_state:
 def set_stock(sid):
     st.session_state['stock_id'] = sid
 
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def preferred_exchange_suffix(sid):
+    """Use the listing market to avoid an unnecessary Yahoo ticker retry."""
+    try:
+        import twstock
+        stock = twstock.codes.get(str(sid).strip().upper())
+        market = str(getattr(stock, 'market', '')).upper()
+        if '上櫃' in market or 'OTC' in market:
+            return '.TWO'
+    except Exception:
+        pass
+    return '.TW'
+
 bg_color = "#0F172A"
 card_bg = "#1E293B"
 text_color = "#F8FAFC"
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600, show_spinner=False)
 def get_global_market_data():
     symbols = {
         '^TWII': '加權指數', '2330.TW': '台積電',
@@ -30,7 +46,7 @@ def get_global_market_data():
     }
     res = []
     try:
-        df = yf.download(list(symbols.keys()), period="5d", interval="1d", progress=False)
+        df = yf.download(list(symbols.keys()), period="5d", interval="1d", auto_adjust=False, progress=False, threads=True)
         closes = df['Close']
         for sym, name in symbols.items():
             if sym in closes:
@@ -43,7 +59,7 @@ def get_global_market_data():
                     sign = "+" if pct > 0 else ""
                     res.append(f"<span style='color: #ffffff;'>{name}</span> <span style='color: {color}; margin-right: 20px;'>{c:.2f} ({sign}{pct:.2f}%)</span>")
         return "&nbsp;&nbsp;|&nbsp;&nbsp;".join(res)
-    except:
+    except Exception:
         return "暫無國際行情"
 border_color = "#334155"
 
@@ -63,62 +79,104 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # --- 2. 數據核心 ---
-@st.cache_data(ttl=300)
-def load_index_data():
-    try:
-        idx = yf.download("^TWII", period="2y", interval="1d", auto_adjust=False, progress=False)
-        if isinstance(idx.columns, pd.MultiIndex):
-            idx.columns = idx.columns.get_level_values(0)
-        return idx
-    except:
-        return None
-
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_stock_data_safe(sid):
-    for suffix in [".TW", ".TWO"]:
+    sid = str(sid).strip().upper()
+    if not sid:
+        return None, None
+    base_sid = sid[:-4] if sid.endswith('.TWO') else sid[:-3] if sid.endswith('.TW') else sid
+    if not re.fullmatch(r"[A-Z0-9]{1,10}", base_sid):
+        return None, None
+    if sid.endswith((".TW", ".TWO")):
+        suffixes = [""]
+    else:
+        preferred = preferred_exchange_suffix(base_sid)
+        suffixes = [preferred, ".TWO" if preferred == ".TW" else ".TW"]
+    for suffix in suffixes:
         try:
-            full_sid = f"{sid}{suffix}"
-            df = yf.download(full_sid, period="2y", interval="1d", auto_adjust=False, progress=False)
-            if not df.empty:
-                if isinstance(df.columns, pd.MultiIndex):
-                    df.columns = df.columns.get_level_values(0)
-                
-                df = df.dropna(subset=['Close'])
-                df[['Open', 'High', 'Low', 'Close']] = df[['Open', 'High', 'Low', 'Close']].ffill()
-                if 'Volume' in df.columns:
-                    df['Volume'] = df['Volume'].fillna(0)
-                    
-                return df, full_sid
-        except: continue
+            full_sid = sid if not suffix else f"{sid}{suffix}"
+            # Five years provides enough daily bars for the monthly MACD without a second download.
+            df = yf.download(full_sid, period="5y", interval="1d", auto_adjust=False, progress=False, threads=False)
+            if df is None or df.empty:
+                continue
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            required = {'Open', 'High', 'Low', 'Close', 'Volume'}
+            if not required.issubset(df.columns):
+                continue
+            df = df.dropna(subset=['Close'])
+            df[['Open', 'High', 'Low', 'Close']] = df[['Open', 'High', 'Low', 'Close']].ffill()
+            df['Volume'] = df['Volume'].fillna(0)
+            df = df.dropna(subset=['Open', 'High', 'Low', 'Close'])
+            if df.empty:
+                continue
+            return df, full_sid
+        except Exception:
+            continue
     return None, None
 
-@st.cache_data(ttl=300)
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_taiex_data():
+    """Load the Taiwan Stock Exchange capitalization-weighted index for comparison only."""
+    try:
+        df = yf.download('^TWII', period='5y', interval='1d', auto_adjust=False, progress=False, threads=False)
+        if df is None or df.empty:
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        if 'Close' not in df.columns:
+            return None
+        result = df[['Close']].dropna()
+        return result if not result.empty else None
+    except Exception:
+        return None
+
+@st.cache_data(ttl=600, show_spinner=False)
 def load_multi_tf_data(sid, tf):
     tf_map = {"15分K": ("15m", "60d"), "30分K": ("30m", "60d"), "60分K": ("60m", "60d"), "日線": ("1d", "2y"), "週線": ("1wk", "5y"), "月線": ("1mo", "15y")}
     interval, period = tf_map.get(tf, ("1d", "2y"))
-    for suffix in [".TW", ".TWO"]:
+    sid = str(sid).strip().upper()
+    if not sid:
+        return None
+    if sid.endswith((".TW", ".TWO")):
+        suffixes = [""]
+    else:
+        preferred = preferred_exchange_suffix(sid)
+        suffixes = [preferred, ".TWO" if preferred == ".TW" else ".TW"]
+    for suffix in suffixes:
         try:
-            full_sid = f"{sid}{suffix}"
-            df = yf.download(full_sid, period=period, interval=interval, auto_adjust=False, progress=False)
+            full_sid = sid if not suffix else f"{sid}{suffix}"
+            df = yf.download(full_sid, period=period, interval=interval, auto_adjust=False, progress=False, threads=False)
             if not df.empty:
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
+                if not {'Open', 'High', 'Low', 'Close', 'Volume'}.issubset(df.columns):
+                    continue
                 df = df.dropna(subset=['Close'])
                 df[['Open', 'High', 'Low', 'Close']] = df[['Open', 'High', 'Low', 'Close']].ffill()
-                if 'Volume' in df.columns:
-                    df['Volume'] = df['Volume'].fillna(0)
+                df['Volume'] = df['Volume'].fillna(0)
+                df = df.dropna(subset=['Open', 'High', 'Low', 'Close'])
+                if df.empty:
+                    continue
                 return df
-        except: continue
+        except Exception:
+            continue
     return None
 
 def get_poc_data(df_slice, bins):
+    if df_slice is None or df_slice.empty or bins < 2:
+        return 0, np.array([0, 1]), np.array([0])
     p_min, p_max = df_slice['Low'].min(), df_slice['High'].max()
-    if p_min == p_max:
-        p_min, p_max = p_min * 0.99, p_max * 1.01
     if pd.isna(p_min) or pd.isna(p_max):
         return 0, np.array([0, 1]), np.array([0])
+    if p_min == p_max:
+        p_min, p_max = p_min * 0.99, p_max * 1.01
     p_buckets = np.linspace(p_min, p_max, bins)
-    v_hist, _ = np.histogram(df_slice['Close'], bins=p_buckets, weights=df_slice['Volume'])
+    closes = pd.to_numeric(df_slice['Close'], errors='coerce').to_numpy()
+    volumes = pd.to_numeric(df_slice['Volume'], errors='coerce').fillna(0).to_numpy()
+    valid = np.isfinite(closes) & np.isfinite(volumes)
+    v_hist, _ = np.histogram(closes[valid], bins=p_buckets, weights=volumes[valid])
     if len(v_hist) == 0:
         return 0, p_buckets, v_hist
     poc = (p_buckets[np.argmax(v_hist)] + p_buckets[np.argmax(v_hist)+1]) / 2
@@ -154,8 +212,112 @@ def calculate_macd_countdown(df, fast, slow, signal):
                 return f"-{max(1, int(round(bars)))}"
             else:
                 return "未收斂"
-    except:
+    except Exception:
         return None
+
+
+def resample_ohlcv(df, frequency):
+    """Resample cached daily bars, avoiding separate weekly/monthly API requests."""
+    if df is None or df.empty:
+        return None
+    aggregation = {
+        'Open': 'first', 'High': 'max', 'Low': 'min',
+        'Close': 'last', 'Volume': 'sum'
+    }
+    available = {key: value for key, value in aggregation.items() if key in df.columns}
+    if 'Close' not in available:
+        return None
+    sampled = df.resample(frequency).agg(available).dropna(subset=['Close'])
+    return sampled if not sampled.empty else None
+
+@st.cache_data(ttl=600, show_spinner=False)
+def build_indicators(raw_df):
+    df_d = raw_df.copy()
+    df_d.ta.sma(length=5, append=True)
+    df_d.ta.sma(length=10, append=True)
+    df_d.ta.sma(length=20, append=True)
+    df_d.ta.sma(length=42, append=True)
+    df_d.ta.sma(length=60, append=True)
+    df_d.ta.rsi(length=14, append=True)
+    df_d.ta.obv(append=True)
+    df_d.ta.mfi(length=14, append=True)
+    df_d['OBV_SMA20'] = df_d['OBV'].rolling(window=20, min_periods=1).mean()
+    df_d['MFI_SMA20'] = df_d['MFI_14'].rolling(window=20, min_periods=1).mean()
+    df_d['Net_Flow'] = (df_d['Close'].diff() * df_d['Volume'])
+    
+    # --- NF-QV 綜合風險指標計算 ---
+    window_nf = 20
+    nf_mean = df_d['Net_Flow'].rolling(window=window_nf, min_periods=1).mean()
+    nf_std = df_d['Net_Flow'].rolling(window=window_nf, min_periods=1).std().replace(0, 1e-9)
+    nf_z_score = (df_d['Net_Flow'] - nf_mean) / nf_std
+    df_d['NF_Risk'] = np.where(nf_z_score > 0, 0, np.clip((abs(nf_z_score) / 2.0) * 100, 0, 100))
+    
+    vol_ma = df_d['Volume'].rolling(window=window_nf, min_periods=1).mean().replace(0, 1e-9)
+    vol_ratio = df_d['Volume'] / vol_ma
+    body_pct = (df_d['Close'] - df_d['Open']) / df_d['Close'].replace(0, 1e-9)
+    df_d['VPE_Risk'] = 0.0
+    mask_danger = (body_pct <= 0.005) & (vol_ratio > 1.0)
+    df_d.loc[mask_danger, 'VPE_Risk'] = np.clip(((vol_ratio - 1) / 1.0) * 100, 0, 100)
+    
+    df_d['Pos_Risk'] = np.where(df_d.get('RSI_14', 50) < 70, 0, np.clip(((df_d.get('RSI_14', 50) - 70) / 15.0) * 100, 0, 100))
+    df_d['nf_QV_Score'] = (df_d['NF_Risk'] * 0.4) + (df_d['VPE_Risk'] * 0.4) + (df_d['Pos_Risk'] * 0.2)
+    # ------------------------------
+    # ------------------------------
+    
+    # VPE_Base 與量價分布估算；Yahoo 日線資料不含實際持倉籌碼。
+    df_d['VPE_Base'] = (df_d['Close'] - df_d['Open']) / (df_d['High'] - df_d['Low'] + 1e-5)
+    df_d['Chip_Concentration'] = (df_d['VPE_Base'] * df_d['Volume']).rolling(10).sum() / (df_d['Volume'].rolling(10).sum() + 1e-5) * 100
+
+    # --- 籌碼時間框架分數 (Time-Frame Score) ---
+    df_d['Cum_Net_Flow'] = (df_d['VPE_Base'] * df_d['Volume']).cumsum()
+    df_d['Chip_Score_240'] = ((df_d['Cum_Net_Flow'].rolling(240).corr(df_d['Close']).fillna(0) + 1) / 2) * 100
+
+    
+    # 價量強度比 (T_Score) 與 RVOL
+    flow_60_mean = df_d['Net_Flow'].abs().rolling(window=60, min_periods=1).mean()
+    df_d['T_Score'] = (df_d['Net_Flow'] / (flow_60_mean + 1e-9)).fillna(0.0)
+    df_d['RVOL'] = df_d['Volume'] / df_d['Volume'].rolling(20, min_periods=1).mean()
+
+
+    # --- 17層擴充運算 ---
+    df_d.ta.macd(fast=12, slow=26, signal=9, append=True)
+    df_d.ta.macd(fast=6, slow=10, signal=6, append=True)
+    df_d['MACDh_raw'] = df_d['MACDh_12_26_9']
+    df_d['MACD_raw'] = df_d['MACD_12_26_9']
+    df_d['MACDs_raw'] = df_d['MACDs_12_26_9']
+    
+    df_d.ta.bbands(length=20, std=2, append=True)
+    bbp_cols = [c for c in df_d.columns if c.startswith('BBP_')]
+    if bbp_cols:
+        df_d['BBP_EMA20'] = df_d[bbp_cols[-1]].ewm(span=20, adjust=False).mean().fillna(0.5)
+    else:
+        df_d['BBP_EMA20'] = 0.5
+    
+    df_d['Turnover_Value'] = df_d['Close'] * df_d['Volume']
+    df_d['Turnover_Change_Rate'] = (df_d['Turnover_Value'].pct_change() * 100).clip(-300, 300).fillna(0)
+    df_d['Turnover_Chg_EMA3'] = df_d['Turnover_Change_Rate'].ewm(span=3, adjust=False).mean()
+    
+    df_d['Vol_Rank_Score'] = (df_d['Volume'] / df_d['Volume'].rolling(120, min_periods=1).max() * 100).fillna(0)
+    
+    df_d['Typical_Price'] = (df_d['High'] + df_d['Low'] + df_d['Close']) / 3
+    df_d['VWAP'] = (df_d['Typical_Price'] * df_d['Volume']).cumsum() / (df_d['Volume'].cumsum() + 1e-9)
+    df_d['VWAP_BIAS'] = ((df_d['Close'] - df_d['VWAP']) / df_d['VWAP']) * 100
+    
+    df_d['BIAS_25'] = ((df_d['Close'] - df_d['Close'].rolling(25).mean()) / df_d['Close'].rolling(25).mean()) * 100
+    df_d['Vol_Price_Efficiency'] = (df_d['VPE_Base'] * df_d['RVOL'] * 100).clip(-300, 300).fillna(0)
+    
+    # 1. ATR 與型態辨識
+    df_d.ta.atr(length=14, append=True)
+    df_d.ta.psar(append=True)
+    try:
+        df_d.ta.cdl_pattern(name=["engulfing", "morningstar", "shootingstar", "hammer", "darkcloudcover"], append=True)
+    except Exception: pass
+
+    # 重算一次真正的 rolling VWAP (近期120日) 作為防守線
+    df_d['VWAP'] = (df_d['Typical_Price'] * df_d['Volume']).rolling(120, min_periods=1).sum() / (df_d['Volume'].rolling(120, min_periods=1).sum() + 1e-9)
+
+    return df_d
+
 
 # --- 3. 頂部視覺與極致震撼標題 ---
 header_bg = "linear-gradient(135deg, #020617 0%, #1e3a8a 100%)"
@@ -212,10 +374,11 @@ def get_top_gainers(strict_mode=False):
         "3515": "華擎", "6138": "茂達", "5269": "祥碩", "3013": "晟銘電", "6213": "聯茂"
     }
     # 優化：只搜尋上市後綴，大幅減輕 Yahoo Finance 負擔，避免 404 造成的無限迴圈當機
-    tickers = " ".join([f"{sid}.TW" for sid in basket.keys()])
+    ticker_map = {sid: f"{sid}{preferred_exchange_suffix(sid)}" for sid in basket}
+    tickers = " ".join(ticker_map.values())
     try:
         period = "60d" if strict_mode else "5d"
-        df = yf.download(tickers, period=period, interval="1d", progress=False)
+        df = yf.download(tickers, period=period, interval="1d", auto_adjust=False, progress=False, threads=True)
         if df.empty or 'Close' not in df: raise ValueError("Empty df")
         
         closes = df['Close']
@@ -247,7 +410,7 @@ def get_top_gainers(strict_mode=False):
                 net_flow = (s_data.diff() * s_vol).fillna(0)
                 curr_nf = net_flow.iloc[-1]
                 prev_nf = net_flow.iloc[-2]
-                if curr_nf <= prev_nf * 2 or curr_nf <= 0: continue
+                if curr_nf <= max(prev_nf, 0) * 2 or curr_nf <= 0: continue
                 
                 window_nf = 20
                 nf_mean = net_flow.rolling(window=window_nf, min_periods=1).mean()
@@ -285,8 +448,8 @@ def get_top_gainers(strict_mode=False):
         sorted_sids = sorted(changes.keys(), key=lambda x: changes[x], reverse=True)
         return [(basket[sid], sid) for sid in sorted_sids[:6]]
         
-    except Exception as e:
-        return [("台積電", "2330"), ("聯發科", "2454"), ("鴻海", "2317"), ("廣達", "2382"), ("長榮", "2603"), ("緯創", "3231")]
+    except Exception:
+        return [("雷達暫不可用", "2330")]
 
 c_r1, c_r2 = st.columns([0.6, 0.4])
 with c_r1:
@@ -303,118 +466,37 @@ for i, (s_name, s_id) in enumerate(quick_stocks):
 
 c_in1, c_in2, c_in4 = st.columns([1, 1.5, 1.5])
 with c_in1: stock_id = st.text_input("📍 代號", key="stock_id")
-with c_in2: chart_overlay = st.radio("主圖疊加", ["均線", "布林通道", "主力防線", "SAR"], horizontal=True)
+with c_in2: chart_overlay = st.radio("主圖疊加", ["均線", "布林通道", "VWAP均價防線", "SAR"], horizontal=True)
 with c_in4: display_days = st.slider("觀察天數", min_value=20, max_value=600, value=120, step=1)
 
-cost_price = 0.0
-hold_vol = 1000
+position_col1, position_col2 = st.columns([1, 1])
+with position_col1:
+    cost_price = st.number_input("持倉成本價 (選填)", min_value=0.0, value=0.0, step=0.5, format="%.2f", key="strategy_cost")
+with position_col2:
+    hold_lots = st.number_input("持倉張數", min_value=0, value=1, step=1, key="strategy_lots")
+hold_vol = hold_lots * 1000
 
 raw_df, actual_ticker = load_stock_data_safe(stock_id)
-idx_df = load_index_data()
 
 macd_weekly_countdown = "無資料"
 macd_monthly_countdown = "無資料"
-if stock_id:
-    df_week = load_multi_tf_data(stock_id, "週線")
-    df_month = load_multi_tf_data(stock_id, "月線")
+if raw_df is not None:
+    df_week = resample_ohlcv(raw_df, "W-FRI")
+    df_month = resample_ohlcv(raw_df, "MS")
     w_res = calculate_macd_countdown(df_week, 12, 26, 9)
     m_res = calculate_macd_countdown(df_month, 21, 42, 9)
     if w_res: macd_weekly_countdown = w_res
     if m_res: macd_monthly_countdown = m_res
 
 if raw_df is not None:
-    df_d = raw_df.copy()
-    df_d.ta.sma(length=5, append=True)
-    df_d.ta.sma(length=10, append=True)
-    df_d.ta.sma(length=20, append=True)
-    df_d.ta.sma(length=42, append=True)
-    df_d.ta.sma(length=60, append=True)
-    df_d.ta.rsi(length=14, append=True)
-    df_d.ta.macd(append=True)
-    df_d.ta.obv(append=True)
-    df_d.ta.mfi(length=14, append=True)
-    df_d['OBV_SMA20'] = df_d['OBV'].rolling(window=20, min_periods=1).mean()
-    df_d['MFI_SMA20'] = df_d['MFI_14'].rolling(window=20, min_periods=1).mean()
-    df_d['Net_Flow'] = (df_d['Close'].diff() * df_d['Volume'])
-    
-    # --- NF-QV 綜合風險指標計算 ---
-    window_nf = 20
-    nf_mean = df_d['Net_Flow'].rolling(window=window_nf, min_periods=1).mean()
-    nf_std = df_d['Net_Flow'].rolling(window=window_nf, min_periods=1).std().replace(0, 1e-9)
-    nf_z_score = (df_d['Net_Flow'] - nf_mean) / nf_std
-    df_d['NF_Risk'] = np.where(nf_z_score > 0, 0, np.clip((abs(nf_z_score) / 2.0) * 100, 0, 100))
-    
-    vol_ma = df_d['Volume'].rolling(window=window_nf, min_periods=1).mean().replace(0, 1e-9)
-    vol_ratio = df_d['Volume'] / vol_ma
-    body_pct = (df_d['Close'] - df_d['Open']) / df_d['Close'].replace(0, 1e-9)
-    df_d['VPE_Risk'] = 0.0
-    mask_danger = (body_pct <= 0.005) & (vol_ratio > 1.0)
-    df_d.loc[mask_danger, 'VPE_Risk'] = np.clip(((vol_ratio - 1) / 1.0) * 100, 0, 100)
-    
-    df_d['Pos_Risk'] = np.where(df_d.get('RSI_14', 50) < 70, 0, np.clip(((df_d.get('RSI_14', 50) - 70) / 15.0) * 100, 0, 100))
-    df_d['nf_QV_Score'] = (df_d['NF_Risk'] * 0.4) + (df_d['VPE_Risk'] * 0.4) + (df_d['Pos_Risk'] * 0.2)
-    # ------------------------------
-    # ------------------------------
-    
-    # VPE_Base 與 籌碼集中度 (精準對齊 AI 戰情室)
-    df_d['VPE_Base'] = (df_d['Close'] - df_d['Open']) / (df_d['High'] - df_d['Low'] + 1e-5)
-    df_d['Chip_Concentration'] = (df_d['VPE_Base'] * df_d['Volume']).rolling(10).sum() / (df_d['Volume'].rolling(10).sum() + 1e-5) * 100
-
-    # --- 籌碼時間框架分數 (Time-Frame Score) ---
-    df_d['Cum_Net_Flow'] = (df_d['VPE_Base'] * df_d['Volume']).cumsum()
-    df_d['Chip_Score_240'] = ((df_d['Cum_Net_Flow'].rolling(240).corr(df_d['Close']).fillna(0) + 1) / 2) * 100
-
-    
-    # 強度比(T) (T_Score) 與 RVOL
-    flow_60_mean = df_d['Net_Flow'].abs().rolling(window=60, min_periods=1).mean()
-    df_d['T_Score'] = (df_d['Net_Flow'] / (flow_60_mean + 1e-9)).fillna(0.0)
-    df_d['RVOL'] = df_d['Volume'] / df_d['Volume'].rolling(20, min_periods=1).mean()
-
-
-    # --- 17層擴充運算 ---
-    df_d.ta.macd(fast=12, slow=26, signal=9, append=True)
-    df_d.ta.macd(fast=6, slow=10, signal=6, append=True)
-    df_d['MACDh_raw'] = df_d['MACDh_12_26_9']
-    df_d['MACD_raw'] = df_d['MACD_12_26_9']
-    df_d['MACDs_raw'] = df_d['MACDs_12_26_9']
-    
-    df_d.ta.bbands(length=20, std=2, append=True)
-    bbp_cols = [c for c in df_d.columns if c.startswith('BBP_')]
-    if bbp_cols:
-        df_d['BBP_EMA20'] = df_d[bbp_cols[-1]].ewm(span=20, adjust=False).mean().fillna(0.5)
-    else:
-        df_d['BBP_EMA20'] = 0.5
-    
-    df_d['Turnover_Value'] = df_d['Close'] * df_d['Volume']
-    df_d['Turnover_Change_Rate'] = (df_d['Turnover_Value'].pct_change() * 100).clip(-300, 300).fillna(0)
-    df_d['Turnover_Chg_EMA3'] = df_d['Turnover_Change_Rate'].ewm(span=3, adjust=False).mean()
-    
-    df_d['Vol_Rank_Score'] = (df_d['Volume'] / df_d['Volume'].rolling(120, min_periods=1).max() * 100).fillna(0)
-    
-    df_d['Typical_Price'] = (df_d['High'] + df_d['Low'] + df_d['Close']) / 3
-    df_d['VWAP'] = (df_d['Typical_Price'] * df_d['Volume']).cumsum() / (df_d['Volume'].cumsum() + 1e-9)
-    df_d['VWAP_BIAS'] = ((df_d['Close'] - df_d['VWAP']) / df_d['VWAP']) * 100
-    
-    df_d['BIAS_25'] = ((df_d['Close'] - df_d['Close'].rolling(25).mean()) / df_d['Close'].rolling(25).mean()) * 100
-    df_d['Vol_Price_Efficiency'] = (df_d['VPE_Base'] * df_d['RVOL'] * 100).clip(-300, 300).fillna(0)
-    
-    # 1. ATR 與型態辨識
-    df_d.ta.atr(length=14, append=True)
-    df_d.ta.psar(append=True)
-    try:
-        df_d.ta.cdl_pattern(name=["engulfing", "morningstar", "shootingstar", "hammer", "darkcloudcover"], append=True)
-    except: pass
-
-    # 重算一次真正的 rolling VWAP (近期120日) 作為防守線
-    df_d['VWAP'] = (df_d['Typical_Price'] * df_d['Volume']).rolling(120, min_periods=1).sum() / (df_d['Volume'].rolling(120, min_periods=1).sum() + 1e-9)
-
+    df_d = build_indicators(raw_df)
     df = df_d.tail(display_days).copy()
     curr = df.iloc[-1]
     price_now = float(curr['Close'])
     poc_price, p_buckets, v_hist = get_poc_data(df, 120)
 
     unrealized_pnl = (price_now - cost_price) * hold_vol if cost_price > 0 else 0
-    pnl_ratio = (unrealized_pnl / (cost_price * hold_vol)) * 100 if cost_price > 0 else 0
+    pnl_ratio = (unrealized_pnl / (cost_price * hold_vol)) * 100 if cost_price > 0 and hold_vol > 0 else 0
 
     # 計算前一天收盤價與相關數據 (為了算漲幅與振幅)
     prev_close = df.iloc[-2]['Close'] if len(df) > 1 else curr['Open']
@@ -432,22 +514,22 @@ if raw_df is not None:
         change_str = "0.00%"
         
     stock_name = ""
+    clean_sid = str(stock_id).strip().upper().replace('.TWO', '').replace('.TW', '')
     try:
         import twstock
-        clean_sid = str(stock_id).replace('.TWO', '').replace('.TW', '').strip()
         if clean_sid in twstock.codes:
             stock_name = twstock.codes[clean_sid].name
-    except:
+    except Exception:
         pass
         
     display_title = f"{clean_sid} {stock_name}".strip()
     
-    # 最新大單動向 (從 Net_Flow 推算)
+    # 以價量變化估算方向；此資料無法辨識實際大單或交易者身分。
     curr_netflow = curr['Net_Flow']
     if curr_netflow > 0:
-        big_order_status = f"<span style='color:#DC2626; font-weight:bold;'>大單湧入 (淨流入 +{curr_netflow:,.0f})</span>"
+        big_order_status = f"<span style='color:#DC2626; font-weight:bold;'>量價代理偏正向 (+{curr_netflow:,.0f})</span>"
     else:
-        big_order_status = f"<span style='color:#16A34A; font-weight:bold;'>大單出場 (淨流出 {curr_netflow:,.0f})</span>"
+        big_order_status = f"<span style='color:#16A34A; font-weight:bold;'>量價代理偏負向 ({curr_netflow:,.0f})</span>"
 
     # --- 戰鬥力分數與極端反轉雷達 ---
     # 優化後的戰鬥力演算法 (加入當日漲跌幅動能)
@@ -485,13 +567,13 @@ if raw_df is not None:
     # 爆量雷達
     rvol_val = curr.get('RVOL', 1)
     if rvol_val > 3.0 and change_pct > 2.0:
-        reversal_msg += f"<div style='background:#FEF3C7; border:2px solid #F59E0B; color:#B45309; padding:12px; border-radius:10px; font-weight:bold; font-style:normal; font-size:16px; text-align:center; margin-bottom:15px; box-shadow: 0 4px 6px rgba(245, 158, 11, 0.2);'>⚠️ 爆量異動雷達：當前成交量高達均量的 {rvol_val:.1f} 倍，疑似主力大單突擊！</div>"
+        reversal_msg += f"<div style='background:#FEF3C7; border:2px solid #F59E0B; color:#B45309; padding:12px; border-radius:10px; font-weight:bold; font-style:normal; font-size:16px; text-align:center; margin-bottom:15px; box-shadow: 0 4px 6px rgba(245, 158, 11, 0.2);'>⚠️ 量能異動：成交量約為近 20 期均量的 {rvol_val:.1f} 倍，這是量能提示，不代表可辨識主力交易。</div>"
         
     chip_s240_top = curr.get('Chip_Score_240', 0)
     score_color = "#DC2626" if chip_s240_top > 80 else "#F59E0B" if chip_s240_top > 60 else "#64748B"
     bg_color = "#FEF2F2" if score_color == "#DC2626" else "#FFFBEB" if score_color == "#F59E0B" else "#F8FAFC"
     border_col = "#FCA5A5" if score_color == "#DC2626" else "#FDE68A" if score_color == "#F59E0B" else "#CBD5E1"
-    chip_score_badge = f"<span style='color: {score_color}; font-size: 16px; font-weight: bold; background: {bg_color}; padding: 4px 12px; border-radius: 6px; border: 1px solid {border_col}; margin-left: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);'>⏱️ 籌碼連動: {chip_s240_top:.0f} 分</span>"
+    chip_score_badge = f"<span style='color: {score_color}; font-size: 16px; font-weight: bold; background: {bg_color}; padding: 4px 12px; border-radius: 6px; border: 1px solid {border_col}; margin-left: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);'>⏱️ 籌碼關連性: {chip_s240_top:.0f} 分</span>"
         
     st.markdown(reversal_msg, unsafe_allow_html=True)
     st.markdown(f"""<div style="display: flex; justify-content: space-between; align-items: center; background: #F8FAFC; padding: 12px 20px; border-radius: 8px; border: 1px solid #E2E8F0; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
@@ -507,10 +589,10 @@ if raw_df is not None:
 <span style="color: #16A34A; font-weight: bold; margin-right: 20px;">{curr['Low']:.2f}</span>
 <span style="color: #64748B; margin-right: 5px;">振幅</span>
 <span style="color: #F59E0B; font-weight: bold; margin-right: 10px;">{amp_pct:.2f}%</span>
-<span style="color: #475569; font-size: 24px; font-weight: 900; background: #F8FAFC; padding: 3px 15px; border-radius: 6px; border: 1px solid #CBD5E1; margin-left: 20px; letter-spacing: 1px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">{display_title}</span>{chip_score_badge}
+<span style="color: #475569; font-size: 24px; font-weight: 900; background: #F8FAFC; padding: 3px 15px; border-radius: 6px; border: 1px solid #CBD5E1; margin-left: 20px; letter-spacing: 1px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">{escape(display_title)}</span>{chip_score_badge}
 </div>
 <div style="font-size: 16px; background: #FFFFFF; padding: 6px 15px; border-radius: 6px; border: 1px solid #CBD5E1; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center;">
-<span style="color: #475569; margin-right: 8px; font-weight: bold;">📊 最新大單動向:</span> <span style="margin-right: 10px;">{big_order_status}</span> {combat_badge}
+<span style="color: #475569; margin-right: 8px; font-weight: bold;">📊 量價方向估算:</span> <span style="margin-right: 10px;">{big_order_status}</span> {combat_badge}
 </div>
 </div>""", unsafe_allow_html=True)
 
@@ -518,7 +600,7 @@ if raw_df is not None:
     m_color = '#DC2626' if '+' in str(macd_monthly_countdown) else '#16A34A' if '-' in str(macd_monthly_countdown) else '#475569'
     
     st.markdown(f"""
-    <div style="display: flex; justify-content: flex-end; gap: 10px; margin-bottom: -45px; position: relative; z-index: 99; padding-right: 15px; pointer-events: none;">
+    <div style="display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 10px; margin: 8px 0 12px; position: relative; z-index: 1; padding-right: 0;">
         <div style="background: #EFF6FF; border: 1px solid #93C5FD; padding: 4px 12px; border-radius: 6px; font-size: 13px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); pointer-events: auto; display: flex; align-items: center; gap: 6px;">
             <span style="color: #1E3A8A; font-weight: bold;">波段(週)</span>
             <span style="font-weight: 900; color: {w_color}; font-size: 15px;">{macd_weekly_countdown}</span>
@@ -530,7 +612,7 @@ if raw_df is not None:
     </div>
     """, unsafe_allow_html=True)
 
-    tab1, tab5, tab2, tab3, tab4 = st.tabs(["📊 技術看板", "📈 多時區K線", "💎 籌碼深度分佈", "🎯 深度實戰建議", "⚖️ 資金戰略與加減碼"])
+    tab1, tab5, tab2, tab3, tab4, tab6 = st.tabs(["📊 技術看板", "📈 多時區K線", "💎 量價分布估算", "🎯 深度實戰建議", "⚖️ 資金戰略與加減碼", "📊 相對強弱與大盤"])
 
     lock_config = {'displayModeBar': False, 'scrollZoom': False, 'staticPlot': False, 'doubleClick': False, 'responsive': True}
 
@@ -565,33 +647,33 @@ if raw_df is not None:
                 fig.add_trace(go.Scatter(x=df.index, y=df[bb_upper], name="BB上軌", line=dict(color='#93C5FD', width=1.5, dash='dash')), row=2, col=1)
                 fig.add_trace(go.Scatter(x=df.index, y=df[bb_mid], name="BB中軌", line=dict(color='#FCD34D', width=1.5)), row=2, col=1)
                 fig.add_trace(go.Scatter(x=df.index, y=df[bb_lower], name="BB下軌", line=dict(color='#93C5FD', width=1.5, dash='dash')), row=2, col=1)
-        elif chart_overlay == "主力防線":
+        elif chart_overlay == "VWAP均價防線":
             fig.add_hline(y=res_val, line_dash="dot", line_color="#EF4444", line_width=1.5, annotation_text=f"壓力 {res_val:.2f}", row=2, col=1)
             fig.add_hline(y=sup_val, line_dash="dot", line_color="#10B981", line_width=1.5, annotation_text=f"支撐 {sup_val:.2f}", row=2, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['VWAP'], name="VWAP主力防守", line=dict(color='#F59E0B', width=2, dash='dashdot')), row=2, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['VWAP'], name="VWAP均價線", line=dict(color='#F59E0B', width=2, dash='dashdot')), row=2, col=1)
         elif chart_overlay == "SAR":
             try:
                 psar_l = [c for c in df.columns if c.startswith('PSARl_')][-1]
                 psar_s = [c for c in df.columns if c.startswith('PSARs_')][-1]
                 fig.add_trace(go.Scatter(x=df.index, y=df[psar_l], mode='markers', name="SAR多頭", marker=dict(color='#10B981', size=5, symbol='circle')), row=2, col=1)
                 fig.add_trace(go.Scatter(x=df.index, y=df[psar_s], mode='markers', name="SAR空頭", marker=dict(color='#EF4444', size=5, symbol='circle')), row=2, col=1)
-            except: pass
+            except Exception: pass
 
         if cost_price > 0:
             fig.add_hline(y=cost_price, line_dash="dash", line_color="#333", annotation_text=f"成本:{cost_price}", row=2, col=1)
         
         # 指標加入左側顯示
         colors = ['#FF0000' if x >= 0 else '#00FF00' for x in df['Net_Flow']]
-        fig.add_trace(go.Bar(x=df.index, y=df['Net_Flow'], name="資金流", marker_color=colors), row=3, col=1)
+        fig.add_trace(go.Bar(x=df.index, y=df['Net_Flow'], name="價量變動代理", marker_color=colors), row=3, col=1)
         
         # 籌碼集中度 (面積圖)
         colors_chip = ['#1f77b4' if x >= 0 else '#d62728' for x in df['Chip_Concentration']]
-        fig.add_trace(go.Scatter(x=df.index, y=df['Chip_Concentration'], name="集中度", fill='tozeroy', line=dict(color='rgba(255,255,255,0)')), row=4, col=1)
-        fig.add_trace(go.Bar(x=df.index, y=df['Chip_Concentration'], name="集中度柱狀", marker_color=colors_chip, showlegend=False), row=4, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['Chip_Concentration'], name="量價分布估算", fill='tozeroy', line=dict(color='rgba(255,255,255,0)')), row=4, col=1)
+        fig.add_trace(go.Bar(x=df.index, y=df['Chip_Concentration'], name="量價分布柱狀", marker_color=colors_chip, showlegend=False), row=4, col=1)
         fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1, row=4, col=1)
-        # 第 5 層：強度比(T)
+        # 第 5 層：價量強度比(T)
         colors_t = ['#EF4444' if t >= 2.5 else '#F87171' if t >= 1.5 else '#10B981' if t <= -2.5 else '#34D399' if t <= -1.5 else '#CBD5E1' for t in df['T_Score']]
-        fig.add_trace(go.Bar(x=df.index, y=df['T_Score'], name="強度比(T)", marker_color=colors_t), row=5, col=1)
+        fig.add_trace(go.Bar(x=df.index, y=df['T_Score'], name="價量強度比(T)", marker_color=colors_t), row=5, col=1)
         
         # 第 6 層：RVOL 相對量能
         colors_rvol = ['#ff4d4d' if r >= 2.0 else '#ffb33b' if r >= 1.2 else '#a8dadc' for r in df['RVOL']]
@@ -616,7 +698,8 @@ if raw_df is not None:
         fig.add_hline(y=-20, line_dash="solid", line_color="#22C55E", line_width=1.5, row=7, col=1)
         
         # 第 8 層：成交量熱度分數
-        vol_scaled = (df['Volume'] - df['Volume'].min()) / (df['Volume'].max() - df['Volume'].min()) * 100
+        volume_range = df['Volume'].max() - df['Volume'].min()
+        vol_scaled = ((df['Volume'] - df['Volume'].min()) / volume_range * 100) if volume_range > 0 else pd.Series(0.0, index=df.index)
         fig.add_trace(go.Bar(x=df.index, y=vol_scaled, name="成交量", marker_color='rgba(158, 202, 225, 0.5)'), row=8, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['Vol_Rank_Score'], name="熱度分數", line=dict(color='#EAB308', width=2)), row=8, col=1)
         
@@ -643,7 +726,7 @@ if raw_df is not None:
         fig.add_trace(go.Scatter(x=df.index, y=df['MACDs_raw'], name="MACD原慢線", line=dict(color='#F59E0B', width=1)), row=11, col=1)
         
         # 第 12 層：暫無大戶持股比 (因 yfinance 無法獲取，使用 OBV 替代顯示)
-        fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="大戶籌碼代理", fill='tozeroy', fillcolor='rgba(139, 92, 246, 0.2)', line=dict(color='#8B5CF6', width=2)), row=12, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name="OBV量價代理", fill='tozeroy', fillcolor='rgba(139, 92, 246, 0.2)', line=dict(color='#8B5CF6', width=2)), row=12, col=1)
         
         # 第 13 層：布林極限 %B (包含主線與均線以顯示黃金交叉)
         bbp_cols = [c for c in df.columns if c.startswith('BBP_') and c != 'BBP_EMA20']
@@ -724,8 +807,8 @@ if raw_df is not None:
             st.plotly_chart(fig_vp, use_container_width=True, config=lock_config)
         with col_c2:
             st.markdown('<p class="diag-section-title">🕵️ 詹帥籌碼核心觀察</p>', unsafe_allow_html=True)
-            st.markdown(f"<div class='indicator-box'><b>📍 籌碼重心 (POC) 解析</b><br>密集區在 {poc_price:.2f}。目前為{'「多頭優勢」' if price_now > poc_price else '「空頭反彈」'}。</div>", unsafe_allow_html=True)
-            st.markdown(f"<div class='indicator-box'><b>🔥 動能指標 (MFI)</b><br>數值 {curr['MFI_14']:.1f}。{'資金流入，籌碼穩定。' if curr['MFI_14'] > 50 else '資金流出，嚴防無量。'}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='indicator-box'><b>📍 成交量價位估算 (POC)</b><br>依每日收盤價與成交量粗估的密集區約在 {poc_price:.2f}。目前價格{'高於' if price_now > poc_price else '不高於'}此估算值。</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='indicator-box'><b>🔥 動能指標 (MFI)</b><br>數值 {curr['MFI_14']:.1f}。{'MFI 顯示正向量價動能。' if curr['MFI_14'] > 50 else 'MFI 顯示負向量價動能。'}</div>", unsafe_allow_html=True)
             
             # --- 籌碼時間框架分數 UI ---
             chip_s240 = curr.get('Chip_Score_240', 0)
@@ -733,20 +816,23 @@ if raw_df is not None:
             diff_240 = chip_s240 - prev_s240
             icon_240 = "📈" if diff_240 > 0 else "📉" if diff_240 < 0 else "➖"
             
-            status_text = "長線籌碼推動力極強！" if chip_s240 > 80 else "籌碼連動穩定。" if chip_s240 > 60 else "目前相關性普通，需搭配技術面。"
-            st.markdown(f"<div class='indicator-box'><b>⏱️ 歷史籌碼連動 (240T)</b><br>當前分數：{chip_s240:.1f} (昨日 {prev_s240:.1f} {icon_240})<br><br><span style='color:#DC2626; font-weight:bold;'>{status_text}</span></div>", unsafe_allow_html=True)
+            status_text = "量價相關性偏高。" if chip_s240 > 80 else "量價相關性中等。" if chip_s240 > 60 else "量價相關性偏低，需搭配其他資料。"
+            st.markdown(f"<div class='indicator-box'><b>⏱️ 240 期量價相關估算</b><br>當前分數：{chip_s240:.1f} (前一期 {prev_s240:.1f} {icon_240})<br><br><span style='color:#DC2626; font-weight:bold;'>{status_text}</span></div>", unsafe_allow_html=True)
 
     with tab3:
         # (此分頁內容與 21 項指標邏輯完整保留)
         col_r1, col_r2 = st.columns([0.45, 0.55])
         with col_r1:
-            radar_vals = [100 if price_now > curr['SMA_20'] else 20, curr['RSI_14'], curr['MFI_14'], 100 if curr['MACDh_12_26_9'] > 0 else 20, 100 if curr['OBV'] > df['OBV'].iloc[-5] else 30, 100 if curr['Net_Flow'] > 0 else 30]
+            obv_reference = df['OBV'].iloc[-5] if len(df) >= 5 else df['OBV'].iloc[0]
+            radar_vals = [100 if price_now > curr['SMA_20'] else 20, curr['RSI_14'], curr['MFI_14'], 100 if curr['MACDh_12_26_9'] > 0 else 20, 100 if curr['OBV'] > obv_reference else 30, 100 if curr['Net_Flow'] > 0 else 30]
             fig_r = go.Figure(go.Scatterpolar(r=radar_vals, theta=['趨勢', 'RSI', 'MFI', 'MACD', 'OBV', '資金'], fill='toself'))
             fig_r.update_layout(height=400, showlegend=False, polar=dict(radialaxis=dict(visible=True, range=[0, 100]), angularaxis=dict(direction="clockwise")))
             st.plotly_chart(fig_r, use_container_width=True, config=lock_config)
         with col_r2:
             st.markdown('<p class="diag-section-title">🚀 詹帥動態實戰戰略艙</p>', unsafe_allow_html=True)
-            support = max(curr['SMA_20'], poc_price)
+            sma20 = curr.get('SMA_20', price_now)
+            sma20 = float(sma20) if pd.notna(sma20) else price_now
+            support = max(sma20, poc_price)
             if cost_price == 0:
                 cmd, detail, border_color = "請輸入成本價", "輸入後將提供專屬戰略。", "#007bff"
             elif pnl_ratio >= 15:
@@ -767,14 +853,15 @@ if raw_df is not None:
         col_calc1, col_calc2 = st.columns([0.4, 0.6])
         with col_calc1:
             st.subheader("🛠️ 戰略參數輸入")
-            cur_avg_p = st.number_input("現有成本價", value=float(price_now), format="%.2f", key="sim_cost")
-            cur_qty = st.number_input("現有張數", value=int(hold_vol/1000), step=1, key="sim_qty")
+            cur_avg_p = st.number_input("現有成本價", min_value=0.0, value=float(cost_price or price_now), format="%.2f", key="sim_cost")
+            cur_qty = st.number_input("現有張數", min_value=0, value=int(hold_vol/1000), step=1, key="sim_qty")
             st.write("---")
-            change_shares = st.number_input("變動張數 (張)", value=1, step=1, key="sim_change_q")
-            change_price = st.number_input("變動執行價格", value=float(price_now), format="%.2f", key="sim_change_p")
+            change_shares = st.number_input("變動張數 (買進為正、賣出為負)", min_value=-int(cur_qty), value=1, step=1, key="sim_change_q")
+            change_price = st.number_input("變動執行價格", min_value=0.0, value=float(price_now), format="%.2f", key="sim_change_p")
             
             st.write("---")
             st.markdown("🎯 **風險報酬設定**")
+            st.caption("損益試算為未含手續費、交易稅與滑價的估算值。")
             
             atr_val = curr.get('ATRr_14', 0)
             if atr_val > 0:
@@ -792,15 +879,20 @@ if raw_df is not None:
             change_total_amt = abs(change_shares) * change_price * 1000
             st.markdown(f"""<div class='calc-highlight' style='border-left: 5px solid #ff4b4b;'>🚀 變動總金額：<b>{change_total_amt:,.0f}</b> 元</div>""", unsafe_allow_html=True)
             
-            total_qty_new = cur_qty + change_shares
-            if total_qty_new > 0:
-                new_avg_price = ((cur_avg_p * cur_qty) + (change_price * change_shares)) / total_qty_new
-                new_cost_total = new_avg_price * total_qty_new * 1000
-                new_market_total = price_now * total_qty_new * 1000
-                new_pnl_val = new_market_total - new_cost_total
-                new_pnl_pct = (new_pnl_val / new_cost_total * 100) if new_cost_total > 0 else 0
+            total_qty_new = max(0, cur_qty + change_shares)
+            buy_qty = max(0, change_shares)
+            sell_qty = max(0, -change_shares)
+            if buy_qty:
+                basis_after = (cur_avg_p * cur_qty) + (change_price * buy_qty)
+                new_avg_price = basis_after / total_qty_new if total_qty_new else 0
             else:
-                new_avg_price, new_pnl_val, new_pnl_pct = 0, 0, 0
+                # 賣出會減少持股數，不會改變剩餘持股的平均成本。
+                new_avg_price = cur_avg_p if total_qty_new else 0
+            realized_pnl = (change_price - cur_avg_p) * sell_qty * 1000
+            unrealized_after = (price_now - new_avg_price) * total_qty_new * 1000
+            new_pnl_val = realized_pnl + unrealized_after
+            pnl_basis = (cur_avg_p * cur_qty) + (change_price * buy_qty)
+            new_pnl_pct = (new_pnl_val / (pnl_basis * 1000) * 100) if pnl_basis > 0 else 0
 
         with col_calc2:
             st.subheader("📊 模擬戰略結果")
@@ -817,7 +909,7 @@ if raw_df is not None:
             r2.metric("預期盈虧百分比", f"{new_pnl_pct:.2f}%", delta=f"{new_pnl_pct - now_pnl_pct:.2f}%")
             
             st.markdown('<p class="diag-section-title">⚖️ 風險報酬比 (Risk/Reward)</p>', unsafe_allow_html=True)
-            if new_avg_price > 0 and stop_loss < new_avg_price and take_profit > new_avg_price:
+            if total_qty_new > 0 and new_avg_price > 0 and stop_loss < new_avg_price and take_profit > new_avg_price:
                 risk_per_share = new_avg_price - stop_loss
                 reward_per_share = take_profit - new_avg_price
                 rr_ratio = reward_per_share / risk_per_share
@@ -847,7 +939,9 @@ if raw_df is not None:
                 st.warning("請合理設定停損價(低於成本)與停利價(高於成本)以計算風報比。")
             
             st.markdown('<p class="diag-section-title">⚠️ 加碼風險評鑑</p>', unsafe_allow_html=True)
-            support_val = max(curr['SMA_20'], poc_price)
+            sma20 = curr.get('SMA_20', price_now)
+            sma20 = float(sma20) if pd.notna(sma20) else price_now
+            support_val = max(sma20, poc_price)
             if change_shares > 0:
                 if change_price < support_val * 0.95: risk_s, risk_c = "🔴 高風險 (危險攤平)", "red"
                 elif change_price <= support_val * 1.03: risk_s, risk_c = "🟢 低風險 (策略加碼)", "green"
@@ -859,7 +953,8 @@ if raw_df is not None:
         st.markdown('<p class="diag-section-title">📈 多時區 K 線分析</p>', unsafe_allow_html=True)
         tf_choice = st.radio("選擇時區", ["月線", "週線", "日線", "60分K", "30分K", "15分K"], horizontal=True, index=2)
         
-        tf_df = load_multi_tf_data(stock_id, tf_choice)
+        # The already cached main download is also the daily timeframe source.
+        tf_df = raw_df.copy() if tf_choice == "日線" else load_multi_tf_data(actual_ticker or stock_id, tf_choice)
         if tf_df is not None and not tf_df.empty:
             if tf_choice == "月線":
                 tf_df.ta.sma(length=5, append=True)
@@ -889,7 +984,10 @@ if raw_df is not None:
             tf_df['VPE_Base'] = (tf_df['Close'] - tf_df['Open']) / (tf_df['High'] - tf_df['Low'] + 1e-5)
             tf_df['Chip_Concentration'] = (tf_df['VPE_Base'] * tf_df['Volume']).rolling(10).sum() / (tf_df['Volume'].rolling(10).sum() + 1e-5) * 100
 
-            tf_df = tf_df.tail(display_days).copy()
+            # The shared slider is in trading days; convert it to bars for each interval.
+            bars_per_day = {"月線": 1 / 21, "週線": 1 / 5, "日線": 1, "60分K": 5, "30分K": 10, "15分K": 20}
+            display_bars = max(1, int(np.ceil(display_days * bars_per_day.get(tf_choice, 1))))
+            tf_df = tf_df.tail(display_bars).copy()
 
             has_macd = tf_choice in ["日線", "週線", "月線"]
             has_vol_chip = tf_choice in ["日線", "週線", "月線"]
@@ -937,8 +1035,8 @@ if raw_df is not None:
                 fig_tf.add_trace(go.Bar(x=tf_df.index, y=tf_df['Volume'], name="成交量", marker_color=colors_vol), row=2, col=1)
                 
                 colors_chip = ['#1f77b4' if x >= 0 else '#d62728' for x in tf_df['Chip_Concentration']]
-                fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['Chip_Concentration'], name="集中度", fill='tozeroy', line=dict(color='rgba(255,255,255,0)')), row=3, col=1)
-                fig_tf.add_trace(go.Bar(x=tf_df.index, y=tf_df['Chip_Concentration'], name="集中度柱狀", marker_color=colors_chip), row=3, col=1)
+                fig_tf.add_trace(go.Scatter(x=tf_df.index, y=tf_df['Chip_Concentration'], name="量價分布估算", fill='tozeroy', line=dict(color='rgba(255,255,255,0)')), row=3, col=1)
+                fig_tf.add_trace(go.Bar(x=tf_df.index, y=tf_df['Chip_Concentration'], name="量價分布柱狀", marker_color=colors_chip), row=3, col=1)
                 fig_tf.add_hline(y=0, line_dash="solid", line_color="black", line_width=1, row=3, col=1)
             
             if has_macd:
@@ -966,6 +1064,109 @@ if raw_df is not None:
             st.plotly_chart(fig_tf, use_container_width=True, config=lock_config)
         else:
             st.warning("⚠️ 無法取得該時區資料，請稍後再試。")
+
+    with tab6:
+        st.markdown('<p class="diag-section-title">📊 個股相對強弱與大盤趨勢參考</p>', unsafe_allow_html=True)
+        benchmark_mode = st.radio(
+            "比較基準",
+            ["加權指數", "自訂族群代表代號"],
+            horizontal=True,
+            key="relative_strength_benchmark_mode",
+        )
+        benchmark_df = None
+        benchmark_label = ""
+        if benchmark_mode == "加權指數":
+            benchmark_df = load_taiex_data()
+            benchmark_label = "加權指數 (^TWII)"
+        else:
+            benchmark_code = st.text_input(
+                "族群代表股或 ETF 代號",
+                value="",
+                key="relative_strength_custom_code",
+                help="輸入台股代號，例如族群代表股或 ETF；資料由 Yahoo Finance 提供。",
+            ).strip()
+            if benchmark_code:
+                benchmark_df, benchmark_ticker = load_stock_data_safe(benchmark_code)
+                benchmark_label = f"自訂基準 ({benchmark_ticker or benchmark_code})"
+            else:
+                st.info("輸入族群代表股或 ETF 代號，即可和目前個股比較。")
+
+        if benchmark_df is None and benchmark_mode == "加權指數":
+            st.warning("暫時無法取得加權指數資料，請稍後再試。")
+        elif benchmark_df is not None and not benchmark_df.empty:
+            benchmark_close = benchmark_df['Close'].rename("比較基準")
+            comparison = pd.concat(
+                [raw_df['Close'].rename("個股"), benchmark_close],
+                axis=1,
+                join="inner",
+            ).dropna()
+            if len(comparison) < 20:
+                st.warning("個股與比較基準的共同交易日不足 20 日，暫時無法計算相對強弱。")
+            else:
+                benchmark_last = float(comparison['比較基準'].iloc[-1])
+                benchmark_sma20 = comparison['比較基準'].rolling(20).mean()
+                benchmark_sma60 = comparison['比較基準'].rolling(60).mean()
+                price_above_20 = benchmark_last > float(benchmark_sma20.iloc[-1])
+                trend_confirmed = (
+                    len(comparison) >= 60
+                    and price_above_20
+                    and float(benchmark_sma20.iloc[-1]) > float(benchmark_sma60.iloc[-1])
+                    and float(benchmark_sma20.iloc[-1]) > float(benchmark_sma20.iloc[-6])
+                )
+                trend_weak = (
+                    len(comparison) >= 60
+                    and benchmark_last < float(benchmark_sma20.iloc[-1])
+                    and float(benchmark_sma20.iloc[-1]) < float(benchmark_sma60.iloc[-1])
+                    and float(benchmark_sma20.iloc[-1]) < float(benchmark_sma20.iloc[-6])
+                )
+                if trend_confirmed:
+                    market_regime = "偏多：指數在 20 日線上，且 20 日線高於並上行於 60 日線"
+                elif trend_weak:
+                    market_regime = "偏弱：指數在 20 日線下，且 20 日線低於並下行於 60 日線"
+                else:
+                    market_regime = "盤整／轉折：趨勢條件尚未一致"
+
+                st.info(f"**大盤趨勢參考：{market_regime}**｜此提示不會更動原有戰鬥力分數或選股結果。")
+                metrics = []
+                for lookback in (20, 60, 120):
+                    if len(comparison) <= lookback:
+                        continue
+                    stock_return = float(comparison['個股'].iloc[-1] / comparison['個股'].iloc[-lookback - 1] - 1)
+                    benchmark_return = float(comparison['比較基準'].iloc[-1] / comparison['比較基準'].iloc[-lookback - 1] - 1)
+                    metrics.append({
+                        "期間": f"{lookback} 個交易日",
+                        "個股報酬": stock_return,
+                        "比較基準報酬": benchmark_return,
+                        "相對超額": stock_return - benchmark_return,
+                    })
+                if metrics:
+                    st.markdown(f"**比較對象：{display_title} vs. {benchmark_label}**")
+                    st.dataframe(
+                        pd.DataFrame(metrics).set_index("期間").style.format("{:.2%}"),
+                        use_container_width=True,
+                    )
+
+                view = comparison.tail(display_days)
+                normalized = view.div(view.iloc[0]).mul(100)
+                relative_line = normalized['個股'].div(normalized['比較基準']).mul(100)
+                fig_rs = make_subplots(
+                    rows=2,
+                    cols=1,
+                    shared_xaxes=True,
+                    vertical_spacing=0.08,
+                    row_heights=[0.62, 0.38],
+                    subplot_titles=("價格報酬指數（起始 = 100）", "相對強弱線（起始 = 100；高於 100 代表個股較強）"),
+                )
+                fig_rs.add_trace(go.Scatter(x=view.index, y=normalized['個股'], name="個股", line=dict(color="#2563EB", width=2)), row=1, col=1)
+                fig_rs.add_trace(go.Scatter(x=view.index, y=normalized['比較基準'], name=benchmark_label, line=dict(color="#F59E0B", width=2)), row=1, col=1)
+                fig_rs.add_trace(go.Scatter(x=view.index, y=relative_line, name="相對強弱", line=dict(color="#10B981", width=2)), row=2, col=1)
+                fig_rs.add_hline(y=100, line_dash="dash", line_color="#64748B", row=1, col=1)
+                fig_rs.add_hline(y=100, line_dash="dash", line_color="#64748B", row=2, col=1)
+                fig_rs.update_layout(height=680, hovermode="x unified", margin=dict(l=10, r=10, t=50, b=10), showlegend=True)
+                fig_rs.update_xaxes(type="date", fixedrange=True)
+                fig_rs.update_yaxes(fixedrange=True)
+                st.plotly_chart(fig_rs, use_container_width=True, config=lock_config)
+                st.caption("報酬以收盤價計算，未納入股利；加權指數是上市股票市場基準，櫃買個股可改輸入族群代表股或 ETF。趨勢與相對強弱僅供比較參考，不代表未來績效。")
 
 else:
     st.error("❌ 數據載入失敗，請檢查代號是否正確。")
